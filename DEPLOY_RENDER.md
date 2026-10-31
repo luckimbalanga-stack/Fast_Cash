@@ -191,7 +191,7 @@ flutter build apk --dart-define=API_BASE=https://fast-cash-api-xxxx.onrender.com
 
 ---
 
-## Étape 5 — Comptes de test après déploiement
+## Étape 6 — Comptes de test après déploiement
 
 Les comptes seed (si la base est neuve) restent ceux du `README.md` :
 
@@ -205,7 +205,7 @@ Le code OTP s’affiche à l’écran de l’app et dans les **Logs** Render (pa
 
 ---
 
-## Étape 6 — Mise à jour de l’application (popup)
+## Étape 7 — Mise à jour de l’application (popup)
 
 Quand tu publies un nouvel APK :
 
