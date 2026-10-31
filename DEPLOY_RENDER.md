@@ -109,7 +109,34 @@ Si le health check échoue : regarde **Logs** sur Render (souvent un service int
 
 ---
 
-## Étape 4 — Brancher les applications Android
+## Étape 4 — Brancher le frontend admin (web)
+
+En local, Vite proxifie déjà `/api` vers `http://127.0.0.1:8000`.
+
+Pour parler à l’API Render :
+
+```powershell
+cd c:\Fast_Cash\frontend
+copy .env.example .env
+notepad .env
+```
+
+Décommente / renseigne :
+
+```
+VITE_API_BASE=https://TON-SERVICE.onrender.com
+```
+
+Puis :
+
+```powershell
+npm install
+npm run dev
+```
+
+Ou build de prod : `npm run build` (avec la même variable).
+
+## Étape 5 — Brancher les applications Android
 
 L’URL doit être en **HTTPS** (sans `/` à la fin).
 

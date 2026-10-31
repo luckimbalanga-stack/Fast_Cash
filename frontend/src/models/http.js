@@ -1,5 +1,8 @@
 export class ApiError extends Error {}
 
+/** URL de l’API Render en prod ; vide en local (proxy Vite /api → :8000). */
+const API_BASE = String(import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+
 function detailMessage(data, status) {
   if (data && typeof data.detail === 'string') return data.detail
   if (data && Array.isArray(data.detail)) {
@@ -11,9 +14,10 @@ function detailMessage(data, status) {
 export async function request(path, { method = 'GET', body, token } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`
   let response
   try {
-    response = await fetch(path, {
+    response = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

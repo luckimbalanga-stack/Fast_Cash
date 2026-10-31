@@ -17,7 +17,8 @@ def create_app(service_name: str) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        # * + credentials est refusé par les navigateurs ; false = OK pour mobile + admin web.
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

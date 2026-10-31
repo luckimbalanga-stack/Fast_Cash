@@ -60,7 +60,11 @@ def health():
             report[name] = response.status_code == 200
         except httpx.HTTPError:
             report[name] = False
-    return {"gateway": True, "services": report}
+    payload = {"gateway": True, "services": report}
+    # Render ne marque le service Live que si le health check répond 200.
+    if not all(report.values()):
+        return JSONResponse(payload, status_code=503)
+    return payload
 
 
 @app.api_route("/api/{full_path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
