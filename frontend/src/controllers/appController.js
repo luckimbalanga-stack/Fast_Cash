@@ -183,6 +183,31 @@ export class AppController {
     })
   }
 
+  importUsers(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      this.setState({ error: 'Aucune ligne à importer.' })
+      return Promise.resolve(null)
+    }
+    return this.run(async () => {
+      const result = await this.model.importUsers(this.token, rows.map((row) => ({
+        name: String(row.name || '').trim(),
+        phone: String(row.phone || '').trim(),
+        network: String(row.network || '').trim() || null,
+        status: String(row.status || 'actif').trim() || 'actif',
+      })))
+      await this.refresh()
+      const created = result?.created_count || 0
+      const failed = result?.error_count || 0
+      this.setState({
+        notice: failed
+          ? `${created} utilisateur${created > 1 ? 's' : ''} importé${created > 1 ? 's' : ''}, ${failed} ligne${failed > 1 ? 's' : ''} en erreur.`
+          : `${created} utilisateur${created > 1 ? 's' : ''} importé${created > 1 ? 's' : ''}.`,
+        userImportResult: result,
+      })
+      return result
+    })
+  }
+
   savePdr(input) {
     return this.run(async () => {
       const name = input.name.trim()

@@ -8,7 +8,16 @@ from sqlalchemy.orm import Session
 
 from shared.models import AdminUser, Operation, Pdr, PhoneNumber, Setting, User
 from shared.serialize import admin_dict, user_dict
-from shared.utils import KINSHASA, hash_password, network_label, now_iso, round_money
+from shared.utils import (
+    KINSHASA,
+    NETWORKS,
+    detect_network,
+    hash_password,
+    network_label,
+    normalize_phone,
+    now_iso,
+    round_money,
+)
 
 APP_SETTING_DEFAULTS = {
     "app_version": "1.0.0",
@@ -244,6 +253,82 @@ def list_users(db: Session) -> list[dict]:
         count = db.query(Operation).filter(Operation.user_id == user.id).count()
         payload.append(user_dict(user, numbers, count))
     return payload
+
+
+def _resolve_network(phone: str, network: str | None) -> str:
+    raw = (network or "").strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    aliases = {
+        "orange": "orange",
+        "orangemoney": "orange",
+        "airtel": "airtel",
+        "airtelmoney": "airtel",
+        "mpesa": "mpesa",
+        "m-pesa": "mpesa",
+        "vodacom": "mpesa",
+        "afrimoney": "afrimoney",
+        "afri": "afrimoney",
+    }
+    chosen = aliases.get(raw) or (network.strip().lower() if network else None)
+    if chosen in NETWORKS:
+        return chosen
+    guessed = detect_network(phone)
+    if guessed:
+        return guessed
+    raise HTTPException(status_code=400, detail="Réseau Mobile Money inconnu (orange, airtel, mpesa, afrimoney).")
+
+
+def create_user(db: Session, data: dict) -> dict:
+    name = (data.get("name") or "").strip()
+    if len(name) < 2:
+        raise HTTPException(status_code=400, detail="Indiquez un nom d’au moins 2 caractères.")
+    phone = normalize_phone(data["phone"])
+    status = (data.get("status") or "active").strip().lower()
+    if status in {"actif", "active"}:
+        status = "active"
+    elif status in {"suspendu", "suspended", "inactif", "inactive"}:
+        status = "suspended"
+    if status not in {"active", "suspended"}:
+        raise HTTPException(status_code=400, detail="Statut inconnu (actif ou suspendu).")
+    if db.query(Pdr).filter(Pdr.phone == phone).first():
+        raise HTTPException(status_code=400, detail="Ce numéro appartient déjà à un point de retrait.")
+    if db.query(User).filter(User.phone == phone).first() or db.query(PhoneNumber).filter(PhoneNumber.phone == phone).first():
+        raise HTTPException(status_code=400, detail="Ce numéro est déjà utilisé.")
+    network = _resolve_network(phone, data.get("network"))
+    user = User(name=name, phone=phone, status=status, created_at=now_iso())
+    db.add(user)
+    db.flush()
+    db.add(
+        PhoneNumber(
+            user_id=user.id,
+            phone=phone,
+            network=network,
+            is_primary=True,
+            verified=True,
+            created_at=now_iso(),
+        )
+    )
+    db.flush()
+    numbers = db.query(PhoneNumber).filter(PhoneNumber.user_id == user.id).all()
+    return user_dict(user, numbers, 0)
+
+
+def import_users(db: Session, rows: list[dict]) -> dict:
+    created = []
+    errors = []
+    for index, row in enumerate(rows, start=1):
+        try:
+            created.append(create_user(db, row))
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            errors.append({"row": index, "phone": str(row.get("phone") or ""), "name": str(row.get("name") or ""), "error": detail})
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"row": index, "phone": str(row.get("phone") or ""), "name": str(row.get("name") or ""), "error": str(exc)})
+    return {
+        "created_count": len(created),
+        "error_count": len(errors),
+        "created": created,
+        "errors": errors,
+    }
 
 
 def list_admins(db: Session) -> list[dict]:

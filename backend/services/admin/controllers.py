@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from services.admin import services
-from services.admin.views import AdminPatch, AdminWrite, SettingsWrite
+from services.admin.views import AdminPatch, AdminWrite, SettingsWrite, UserImportBody
 from shared.db import get_db
 from shared.utils import require_roles
 
@@ -42,6 +42,12 @@ def reports(
 def users(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _admin(authorization)
     return services.list_users(db)
+
+
+@router.post("/admin/users/import")
+def import_users(body: UserImportBody, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    _admin(authorization)
+    return services.import_users(db, [row.model_dump() for row in body.users])
 
 
 @router.get("/admin/admins")

@@ -13,6 +13,7 @@ export function createAdminModel() {
     operations: (token) => request('/api/operations', { token }),
     reports: (token, from, to) => request(`/api/admin/reports?date_from=${from}&date_to=${to}`, { token }),
     setUserStatus: (token, id, status) => request(`/api/users/${id}`, { method: 'PATCH', token, body: { status } }),
+    importUsers: (token, users) => request('/api/admin/users/import', { method: 'POST', token, body: { users } }),
     createPdr: (token, body) => request('/api/pdr', { method: 'POST', token, body }),
     updatePdr: (token, id, body) => request(`/api/pdr/${id}`, { method: 'PATCH', token, body }),
     setAvailability: (token, id, body) => request(`/api/pdr/${id}/availability`, { method: 'POST', token, body }),

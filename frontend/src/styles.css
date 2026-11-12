@@ -285,6 +285,16 @@ th { color: #64748b; font-size: 12px; font-weight: 600; }
 }
 .modal.wide { width: min(560px, 100%); background: white; }
 .modal-actions { display: flex; justify-content: end; gap: 8px; }
+.import-preview {
+  max-height: 280px;
+  overflow: auto;
+  background: white;
+  border-radius: 14px;
+  padding: 8px 12px;
+  border: 1px solid #e6ecf2;
+}
+.import-preview table { font-size: 13px; }
+.import-preview th, .import-preview td { white-space: nowrap; }
 .scrim { display: none; }
 
 @media (max-width: 900px) {

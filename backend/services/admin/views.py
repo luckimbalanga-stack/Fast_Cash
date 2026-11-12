@@ -25,3 +25,14 @@ class SettingsWrite(BaseModel):
     app_min_version: str | None = None
     app_download_url: str | None = None
     app_update_message: str | None = None
+
+
+class UserImportRow(BaseModel):
+    name: str = Field(min_length=2)
+    phone: str
+    network: str | None = None
+    status: str | None = "active"
+
+
+class UserImportBody(BaseModel):
+    users: list[UserImportRow] = Field(min_length=1)
