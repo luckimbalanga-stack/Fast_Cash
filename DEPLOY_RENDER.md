@@ -22,8 +22,16 @@ Téléphone Android  --HTTPS-->  gateway Render ($PORT)
                     |   8001   8002   8003   8004   8005
                  identity   pdr  operations notif  admin
                                     |
-                              SQLite (backend/data)
+                         Neon Postgres (DATABASE_URL)
 ```
+
+### Base de données Neon
+
+1. En local, après `neon login` / `neon deploy`, les variables sont dans `.env.local` (jamais committer ce fichier).
+2. Sur Render → service **fast-cash-api** → **Environment** → ajoute `DATABASE_URL` avec la valeur **pooled** Neon (celle de `DATABASE_URL` dans `.env.local`).
+3. Redéploie. Au démarrage, l’API crée les tables sur Postgres si besoin.
+
+Sans `DATABASE_URL`, le backend retombe sur SQLite local (`backend/data/fastcash.db`) pour le développement hors Neon.
 
 ---
 

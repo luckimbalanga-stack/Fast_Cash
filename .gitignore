@@ -43,3 +43,5 @@ mobile/api_base.local
 .DS_Store
 Thumbs.db
 *.log
+.neon
+node_modules/

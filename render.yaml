@@ -11,3 +11,7 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
+      # À renseigner dans le dashboard Render (valeur = DATABASE_URL Neon, pooled).
+      - key: DATABASE_URL
+        sync: false
+
