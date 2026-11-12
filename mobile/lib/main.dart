@@ -58,6 +58,11 @@ class _RootGateState extends State<RootGate> {
     if (controller.pendingUpdate != null && !controller.updatePromptShown) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybePromptUpdate());
     }
+    if (!controller.sessionReady) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: AppColors.brand)),
+      );
+    }
     final role = controller.role;
     return switch (role) {
       'user' => const UserShell(),

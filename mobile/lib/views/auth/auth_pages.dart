@@ -12,54 +12,63 @@ class WelcomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final height = media.size.height;
+    final short = height < 720;
+    final logoSize = short ? 96.0 : 120.0;
+    // Écarte le logo du haut de la zone utile (sous l’encoche / barre d’état).
+    final topGap = short ? 16.0 : 28.0;
+
     return Scaffold(
+      backgroundColor: AppColors.mist,
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                children: [
-                  const SizedBox(height: 12),
-                  const Center(child: FastCashMark(size: 156, stacked: true)),
-                  const SizedBox(height: 8),
-                  const Text('Votre argent, votre monnaie, à proximité.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, fontSize: 15)),
-                  const SizedBox(height: 18),
-                  const _HeroArt(),
-                  const SizedBox(height: 18),
-                  const Row(
-                    children: [
-                      _Feature(icon: Icons.bolt_rounded, title: 'Rapide', text: 'Des transactions en quelques secondes'),
-                      _Feature(icon: Icons.location_on_outlined, title: 'Proche', text: 'Un large réseau de PDR autour de vous'),
-                      _Feature(icon: Icons.payments_outlined, title: 'Intégral', text: 'Tout le montant, dans la devise choisie'),
-                    ],
-                  ),
-                  const SizedBox(height: 22),
-                  PrimaryButton(label: 'Créer un compte', icon: Icons.arrow_forward_rounded, onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterPage()))),
-                  const SizedBox(height: 12),
-                  GhostButton(label: 'Se connecter', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginPage()))),
-                ],
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(20, topGap, 20, short ? 12 : 20),
+          child: Column(
+            children: [
+              Center(child: FastCashMark(size: logoSize, stacked: true)),
+              SizedBox(height: short ? 6 : 10),
+              const Text(
+                'Votre argent, votre monnaie, à proximité.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.muted, fontSize: 14, height: 1.35),
               ),
-            ),
-          ],
+              SizedBox(height: short ? 12 : 16),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Image.asset(
+                    'assets/brand/hero.png',
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    semanticLabel: 'Un point de retrait Fast-Cash à proximité',
+                  ),
+                ),
+              ),
+              SizedBox(height: short ? 12 : 16),
+              if (!short)
+                const Row(
+                  children: [
+                    _Feature(icon: Icons.bolt_rounded, title: 'Rapide', text: 'Des transactions en quelques secondes'),
+                    _Feature(icon: Icons.location_on_outlined, title: 'Proche', text: 'Un large réseau de PDR autour de vous'),
+                    _Feature(icon: Icons.payments_outlined, title: 'Intégral', text: 'Tout le montant, dans la devise choisie'),
+                  ],
+                ),
+              if (!short) const SizedBox(height: 16),
+              PrimaryButton(
+                label: 'Créer un compte',
+                icon: Icons.arrow_forward_rounded,
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterPage())),
+              ),
+              const SizedBox(height: 10),
+              GhostButton(
+                label: 'Se connecter',
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginPage())),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _HeroArt extends StatelessWidget {
-  const _HeroArt();
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
-      child: Image.asset(
-        'assets/brand/hero.png',
-        width: double.infinity,
-        fit: BoxFit.fitWidth,
-        semanticLabel: 'Un point de retrait Fast-Cash à proximité',
       ),
     );
   }

@@ -134,6 +134,15 @@ npm install
 npm run dev
 ```
 
+Ouvre **http://127.0.0.1:5173/** dans ton navigateur pour le voir.
+
+Compte admin :
+
+| | |
+|---|---|
+| E-mail | `admin@fastcash.cd` |
+| Mot de passe | `FastCash-2026` |
+
 Ou build de prod : `npm run build` (avec la même variable).
 
 ## Étape 5 — Brancher les applications Android

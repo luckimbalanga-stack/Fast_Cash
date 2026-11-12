@@ -63,7 +63,7 @@ class _AmountPageState extends State<AmountPage> {
         amount: value!,
         network: phone.network,
         simulated: position.$3,
-        maxM: 1000,
+        maxM: controller.searchRadiusM,
       );
       setState(() => result = found);
     } finally {
@@ -195,7 +195,9 @@ class _NearbyOffer extends StatelessWidget {
       SoftCard(
         color: AppColors.brandSoft,
         child: Text(
-          count == 0 ? 'Aucun point de retrait ouvert dans un rayon de 1 km pour ce montant.' : '$count $noun à votre proximité.',
+          count == 0
+              ? 'Aucun point de retrait ouvert dans un rayon de ${formatRadiusLabel(controller.searchRadiusM)} pour ce montant.'
+              : '$count $noun à votre proximité.',
           style: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.night, height: 1.35),
         ),
       ),
@@ -219,6 +221,175 @@ class _NearbyOffer extends StatelessWidget {
         PrimaryButton(label: 'Procéder à la demande', icon: Icons.arrow_forward_rounded, onPressed: phone == null ? null : onProceed),
       ],
     ]);
+  }
+}
+
+/// Chronologie horizontale des actions en arrière-plan (retrait / dépôt).
+class BackgroundActionStrip extends StatefulWidget {
+  const BackgroundActionStrip({super.key, required this.type, this.status, this.busy = false});
+
+  final String type;
+  final String? status;
+  final bool busy;
+
+  @override
+  State<BackgroundActionStrip> createState() => _BackgroundActionStripState();
+}
+
+class _BackgroundActionStripState extends State<BackgroundActionStrip> {
+  final _scroll = ScrollController();
+  int _visible = 0;
+  Timer? _reveal;
+
+  List<String> get _labels => [
+        'Demande envoyée au PDR',
+        'Demande acceptée par le PDR',
+        'Saisir le code PIN',
+        widget.type == 'withdrawal' ? 'Retrait accepté' : 'Dépôt accepté',
+      ];
+
+  int _targetCount(String? status) {
+    switch (status) {
+      case 'pin_required':
+        return 3;
+      case 'accepted':
+      case 'payment_pending':
+      case 'payment_confirmed':
+      case 'cash_delivered':
+      case 'completed':
+        return 4;
+      case 'refused':
+      case 'cancelled':
+        return _visible.clamp(1, 4);
+      default:
+        return 1; // pending / null
+    }
+  }
+
+  void _syncVisible() {
+    final target = _targetCount(widget.status);
+    if (target <= _visible) {
+      if (target < _visible && widget.status == 'pending') {
+        setState(() => _visible = target);
+      }
+      return;
+    }
+    _reveal?.cancel();
+    _reveal = Timer.periodic(const Duration(milliseconds: 480), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_visible >= target) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _visible += 1);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scroll.hasClients) return;
+        _scroll.animateTo(_scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+      });
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _visible = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _visible = 1);
+      _syncVisible();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant BackgroundActionStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.status != widget.status || oldWidget.type != widget.type) {
+      _syncVisible();
+    }
+  }
+
+  @override
+  void dispose() {
+    _reveal?.cancel();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = _labels;
+    final activeIndex = (_visible - 1).clamp(0, labels.length - 1);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Actions en arrière-plan', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.night, fontSize: 13)),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 78,
+          child: ListView.separated(
+            controller: _scroll,
+            scrollDirection: Axis.horizontal,
+            itemCount: _visible,
+            separatorBuilder: (_, __) => const Padding(
+              padding: EdgeInsets.only(top: 18),
+              child: Icon(Icons.chevron_right_rounded, color: AppColors.brand, size: 22),
+            ),
+            itemBuilder: (context, index) {
+              final done = index < activeIndex || (!widget.busy && _visible >= labels.length && index == activeIndex) || (widget.status != null && widget.status != 'pending' && index < _visible - 1);
+              final current = index == activeIndex && (widget.busy || widget.status == 'pending' || widget.status == 'pin_required');
+              return TweenAnimationBuilder<double>(
+                key: ValueKey('step-$index-${labels[index]}'),
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 380),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) => Opacity(
+                  opacity: value,
+                  child: Transform.translate(offset: Offset(18 * (1 - value), 0), child: child),
+                ),
+                child: _TimelineChip(label: labels[index], done: done && !current, current: current),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TimelineChip extends StatelessWidget {
+  const _TimelineChip({required this.label, required this.done, required this.current});
+  final String label;
+  final bool done;
+  final bool current;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = current ? AppColors.brand : done ? AppColors.mint : AppColors.muted;
+    final soft = current ? AppColors.brandSoft : done ? AppColors.mintSoft : AppColors.mist;
+    return Container(
+      width: 148,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: soft,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(current ? Icons.hourglass_top_rounded : done ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(current ? 'En cours' : done ? 'Fait' : 'À venir', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 6),
+          Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.night, height: 1.25)),
+        ],
+      ),
+    );
   }
 }
 
@@ -290,11 +461,11 @@ class _DispatchPageState extends State<DispatchPage> {
     });
   }
 
-  void _leaveTo(Widget page) {
+  void _leaveTo(Widget page, {Duration delay = Duration.zero}) {
     if (_leaving || !mounted) return;
     _leaving = true;
     _clearTimeout();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future<void>.delayed(delay, () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => page));
     });
@@ -422,27 +593,36 @@ class _DispatchPageState extends State<DispatchPage> {
   Widget build(BuildContext context) {
     final operation = _operationId == null ? null : context.watch<AppController>().operationById(_operationId!);
     if (!_leaving && operation != null) {
+      // Laisse le temps à la chronologie d’afficher « Retrait/Dépôt accepté ».
+      const hold = Duration(milliseconds: 1600);
       if (operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(TokenPage(operation: operation));
+        _leaveTo(TokenPage(operation: operation), delay: hold);
       } else if (operation.isWithdrawal && operation.status == 'cash_delivered') {
-        _leaveTo(_ReceivedPage(operation: operation));
+        _leaveTo(_ReceivedPage(operation: operation), delay: hold);
       } else if (!operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(DepositConfirmedPage(operation: operation));
+        _leaveTo(DepositConfirmedPage(operation: operation), delay: hold);
       } else if (!operation.isWithdrawal && operation.status == 'accepted') {
-        _leaveTo(_StatusPage(operation: operation));
+        _leaveTo(_StatusPage(operation: operation), delay: hold);
       }
     }
     final waitingPin = operation?.status == 'pin_required';
+    final buffering = !_exhausted && _error == null && !waitingPin;
     return Scaffold(
       appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
       body: Padding(
-        padding: const EdgeInsets.all(28),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
         child: Column(children: [
+          BackgroundActionStrip(
+            type: widget.type,
+            status: operation?.status,
+            busy: buffering || waitingPin,
+          ),
           const Spacer(),
-          if (!_exhausted && _error == null) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
+          if (buffering) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
+          if (waitingPin) const Icon(Icons.lock_outline_rounded, size: 64, color: AppColors.brand),
           const SizedBox(height: 22),
           Text(
-            _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Recherche en cours',
+            _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Demande en cours',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night),
           ),
@@ -450,7 +630,7 @@ class _DispatchPageState extends State<DispatchPage> {
           Text(
             _error ??
                 (_exhausted
-                    ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de 1 km.'
+                    ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
                     : waitingPin
                         ? 'Un point de retrait a accepté. Saisissez votre code PIN à 4 chiffres pour continuer.'
                         : 'Chaque point dispose de $_waitSeconds secondes pour valider. Sinon la demande passe au suivant.'),
@@ -659,10 +839,10 @@ class FollowPage extends StatefulWidget {
 class _FollowPageState extends State<FollowPage> {
   bool _leaving = false;
 
-  void _leaveTo(Widget page) {
+  void _leaveTo(Widget page, {Duration delay = Duration.zero}) {
     if (_leaving || !mounted) return;
     _leaving = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future<void>.delayed(delay, () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => page));
     });
@@ -675,17 +855,16 @@ class _FollowPageState extends State<FollowPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!_leaving) {
+      const hold = Duration(milliseconds: 1600);
       if (operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(TokenPage(operation: operation));
+        _leaveTo(TokenPage(operation: operation), delay: hold);
       } else if (operation.isWithdrawal && operation.status == 'cash_delivered') {
-        _leaveTo(_ReceivedPage(operation: operation));
+        _leaveTo(_ReceivedPage(operation: operation), delay: hold);
       } else if (!operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(DepositConfirmedPage(operation: operation));
+        _leaveTo(DepositConfirmedPage(operation: operation), delay: hold);
       }
     }
-    if (_leaving) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: AppColors.brand)));
-    }
+    // Pendant le délai, on garde le suivi visible pour voir la chronologie s’allonger.
     return _StatusPage(operation: operation);
   }
 }
@@ -705,6 +884,12 @@ class _StatusPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          BackgroundActionStrip(
+            type: operation.type,
+            status: operation.status,
+            busy: waiting || needsPin,
+          ),
+          const SizedBox(height: 16),
           StatusPill(status: operation.status, type: operation.type),
           const SizedBox(height: 16),
           Text(_title(), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),

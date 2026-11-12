@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -22,92 +21,83 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
-  String? commune;
-  String? network;
-  bool openOnly = true;
-  LatLng? origin;
+  bool scanning = false;
+  int? total;
+  int? open;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppController>().loadDirectory();
-      _locate();
-    });
-  }
-
-  Future<void> _locate() async {
-    const kinLat = -4.3038;
-    const kinLng = 15.3005;
-    var lat = kinLat;
-    var lng = kinLng;
+  Future<void> _scan() async {
+    setState(() => scanning = true);
     try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-        final current = await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 8));
-        final far = Geolocator.distanceBetween(current.latitude, current.longitude, kinLat, kinLng) > 30000;
-        if (!far) {
-          lat = current.latitude;
-          lng = current.longitude;
-        }
-      }
-    } catch (_) {}
-    if (!mounted) return;
-    setState(() => origin = LatLng(lat, lng));
-  }
-
-  double? _meters(PdrPoint point) {
-    final here = origin;
-    if (here == null) return point.distanceM;
-    return const Distance().as(LengthUnit.Meter, here, LatLng(point.lat, point.lng));
+      final result = await context.read<AppController>().scanZonePdrs();
+      if (!mounted) return;
+      setState(() {
+        total = result.total;
+        open = result.open;
+      });
+      final radius = context.read<AppController>().searchRadiusM;
+      await showZoneScanResult(context, total: result.total, open: result.open, radiusM: radius);
+    } finally {
+      if (mounted) setState(() => scanning = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final points = context.watch<AppController>().directory.where((point) {
-      if (commune != null && point.commune != commune) return false;
-      if (openOnly && !point.isOpen) return false;
-      if (network != null && !point.networks.contains(network)) return false;
-      return true;
-    }).toList();
-    final communes = context.watch<AppController>().directory.map((point) => point.commune).toSet().toList()..sort();
+    final totalLabel = total == null
+        ? null
+        : (total! <= 1 ? '$total PDR trouvé' : '$total PDR trouvés');
+    final openLabel = open == null
+        ? null
+        : (open! <= 1 ? '$open PDR ouvert' : '$open PDR ouverts');
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       children: [
-        const Text('Rechercher un PDR', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
+        const Text('Rechercher', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
         const SizedBox(height: 6),
-        const Text('Points de retrait autour de vous, à Kinshasa.', style: TextStyle(color: AppColors.muted)),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilterChip(label: const Text('Ouvert'), selected: openOnly, onSelected: (value) => setState(() => openOnly = value)),
-            DropdownButton<String?>(
-              value: commune,
-              hint: const Text('Commune'),
-              items: [const DropdownMenuItem<String?>(value: null, child: Text('Toutes')), ...communes.map((item) => DropdownMenuItem(value: item, child: Text(item)))],
-              onChanged: (value) => setState(() => commune = value),
-            ),
-            DropdownButton<String?>(
-              value: network,
-              hint: const Text('Réseau'),
-              items: const [
-                DropdownMenuItem(value: null, child: Text('Tous')),
-                DropdownMenuItem(value: 'orange', child: Text('Orange')),
-                DropdownMenuItem(value: 'airtel', child: Text('Airtel')),
-                DropdownMenuItem(value: 'mpesa', child: Text('M-Pesa')),
-                DropdownMenuItem(value: 'afrimoney', child: Text('AfriMoney')),
-              ],
-              onChanged: (value) => setState(() => network = value),
-            ),
-          ],
+        const Text(
+          'Scannez votre zone pour savoir s’il y a des PDR près de vous. Les points ne sont pas listés ici.',
+          style: TextStyle(color: AppColors.muted, height: 1.35),
         ),
-        const SizedBox(height: 12),
-        ClipRRect(borderRadius: BorderRadius.circular(22), child: SizedBox(height: 240, child: PdrMap(points: points.where((point) => point.isOpen).toList(), center: origin ?? const LatLng(-4.34, 15.31), zoom: 13))),
-        const SizedBox(height: 12),
-        ...points.map((point) => Padding(padding: const EdgeInsets.only(bottom: 10), child: PdrTile(point: point, distanceM: _meters(point)))),
+        const SizedBox(height: 18),
+        SoftCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.radar, color: AppColors.brand, size: 36),
+              const SizedBox(height: 12),
+              const Text('Scanner votre zone pour identifier les PDR', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.night)),
+              const SizedBox(height: 6),
+              Text('Rayon de ${formatRadiusLabel(context.watch<AppController>().searchRadiusM)} autour de votre position.', style: const TextStyle(color: AppColors.muted, fontSize: 13)),
+              const SizedBox(height: 16),
+              PrimaryButton(
+                label: scanning ? 'Scan en cours…' : 'Scanner la zone',
+                icon: Icons.my_location_rounded,
+                busy: scanning,
+                onPressed: scanning ? null : () => runAction(context, _scan),
+              ),
+            ],
+          ),
+        ),
+        if (totalLabel != null && openLabel != null) ...[
+          const SizedBox(height: 14),
+          SoftCard(
+            color: AppColors.brandSoft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Résultat du dernier scan', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 8),
+                Text(
+                  total == 0
+                      ? 'Aucun PDR trouvé dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
+                      : '$totalLabel, dont $openLabel.',
+                  style: const TextStyle(color: AppColors.night, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }

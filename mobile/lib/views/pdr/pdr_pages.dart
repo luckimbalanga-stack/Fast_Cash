@@ -55,6 +55,8 @@ class PdrHomePage extends StatelessWidget {
       return date.year == now.year && date.month == now.month && date.day == now.day;
     }).length;
     final pending = controller.operations.where((operation) => operation.status == 'pending').length;
+    final accepted = controller.operations.where(_isAcceptedRequest).length;
+    final completed = controller.operations.where(_isCompletedRequest).length;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       children: [
@@ -93,10 +95,14 @@ class PdrHomePage extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Row(children: [
-          _Stat(value: '$pending', label: 'Demandes en attente', color: AppColors.brandSoft),
+          _Stat(value: '$pending', label: 'En attente', color: AppColors.brandSoft),
           const SizedBox(width: 8),
-          _Stat(value: '$today', label: 'Transactions du jour', color: const Color(0xFFE8F1FF)),
+          _Stat(value: '$accepted', label: 'Acceptées', color: const Color(0xFFE8F1FF)),
+          const SizedBox(width: 8),
+          _Stat(value: '$completed', label: 'Terminées', color: AppColors.mintSoft),
         ]),
+        const SizedBox(height: 4),
+        Text('Transactions du jour : $today', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
         const SizedBox(height: 8),
         SoftCard(
           color: AppColors.mintSoft,
@@ -108,7 +114,18 @@ class PdrHomePage extends StatelessWidget {
           ]),
         ),
         const SizedBox(height: 8),
-        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.receipt_long, color: AppColors.brand), title: Text('Demandes'), subtitle: Text('Accepter ou refuser les clients'), trailing: Icon(Icons.chevron_right))),
+        SoftCard(
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage())),
+          child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.hourglass_empty_rounded, color: AppColors.brand), title: Text('Demandes en attente'), subtitle: Text('Accepter ou refuser les clients'), trailing: Icon(Icons.chevron_right)),
+        ),
+        SoftCard(
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage(initialTab: 1))),
+          child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.handshake_outlined, color: AppColors.brand), title: const Text('Demandes acceptées'), subtitle: Text(accepted == 0 ? 'Aucune opération en cours' : '$accepted opération${accepted > 1 ? 's' : ''} en cours'), trailing: const Icon(Icons.chevron_right)),
+        ),
+        SoftCard(
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage(initialTab: 2))),
+          child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.check_circle_outline, color: AppColors.brand), title: const Text('Demandes terminées'), subtitle: Text(completed == 0 ? 'Aucune opération clôturée' : '$completed opération${completed > 1 ? 's' : ''} clôturée${completed > 1 ? 's' : ''}'), trailing: const Icon(Icons.chevron_right)),
+        ),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrScanPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.qr_code_scanner, color: AppColors.brand), title: Text('Vérifier un jeton'), subtitle: Text('Scanner ou saisir un code'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Déclarer USD, CDF et les dépôts'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RatingsPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.star_outline, color: AppColors.brand), title: Text('Évaluations reçues'), trailing: Icon(Icons.chevron_right))),
@@ -168,37 +185,83 @@ class _Stat extends StatelessWidget {
   }
 }
 
+bool _isAcceptedRequest(CashOperation operation) => const {
+      'pin_required',
+      'accepted',
+      'payment_pending',
+      'payment_confirmed',
+      'cash_delivered',
+    }.contains(operation.status);
+
+bool _isCompletedRequest(CashOperation operation) => operation.status == 'completed';
+
 class PdrRequestsPage extends StatelessWidget {
-  const PdrRequestsPage({super.key});
+  const PdrRequestsPage({super.key, this.initialTab = 0});
+
+  /// 0 = En attente, 1 = Acceptées, 2 = Terminées
+  final int initialTab;
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
+    final operations = context.watch<AppController>().operations;
+    final pendingCount = operations.where((op) => op.status == 'pending').length;
+    final acceptedCount = operations.where(_isAcceptedRequest).length;
+    final completedCount = operations.where(_isCompletedRequest).length;
+    final canPop = Navigator.canPop(context);
+    final content = DefaultTabController(
       length: 3,
+      initialIndex: initialTab.clamp(0, 2),
       child: Column(children: [
-        const SizedBox(height: 8),
-        const Text('Demandes', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-        const TabBar(labelColor: AppColors.brand, indicatorColor: AppColors.brand, tabs: [Tab(text: 'En attente'), Tab(text: 'Acceptées'), Tab(text: 'Terminées')]),
+        if (!canPop) ...[
+          const SizedBox(height: 8),
+          const Text('Demandes', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+        ],
+        TabBar(
+          labelColor: AppColors.brand,
+          indicatorColor: AppColors.brand,
+          tabs: [
+            Tab(text: pendingCount > 0 ? 'En attente ($pendingCount)' : 'En attente'),
+            Tab(text: acceptedCount > 0 ? 'Acceptées ($acceptedCount)' : 'Acceptées'),
+            Tab(text: completedCount > 0 ? 'Terminées ($completedCount)' : 'Terminées'),
+          ],
+        ),
         Expanded(
           child: TabBarView(children: [
-            _RequestList(match: (operation) => operation.status == 'pending'),
-            _RequestList(match: (operation) => const {'accepted', 'payment_pending', 'payment_confirmed', 'cash_delivered'}.contains(operation.status)),
-            _RequestList(match: (operation) => const {'completed', 'refused', 'cancelled'}.contains(operation.status)),
+            _RequestList(
+              match: (operation) => operation.status == 'pending',
+              emptyLabel: 'Aucune demande en attente',
+            ),
+            _RequestList(
+              match: _isAcceptedRequest,
+              emptyLabel: 'Aucune demande acceptée en cours',
+            ),
+            _RequestList(
+              match: _isCompletedRequest,
+              emptyLabel: 'Aucune demande terminée',
+            ),
           ]),
         ),
       ]),
+    );
+    if (!canPop) return content;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Demandes')),
+      body: content,
     );
   }
 }
 
 class _RequestList extends StatelessWidget {
-  const _RequestList({required this.match});
+  const _RequestList({required this.match, this.emptyLabel = 'Aucune demande'});
   final bool Function(CashOperation operation) match;
+  final String emptyLabel;
 
   @override
   Widget build(BuildContext context) {
-    final items = context.watch<AppController>().operations.where(match).toList();
-    if (items.isEmpty) return const Center(child: Text('Aucune demande', style: TextStyle(color: AppColors.muted)));
+    final items = context.watch<AppController>().operations.where(match).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    if (items.isEmpty) return Center(child: Text(emptyLabel, style: const TextStyle(color: AppColors.muted)));
     return ListView(
       padding: const EdgeInsets.all(16),
       children: items.map((operation) => Padding(
@@ -220,6 +283,14 @@ class PdrRequestPage extends StatelessWidget {
   const PdrRequestPage({super.key, required this.operationId});
   final int operationId;
 
+  Future<void> _accept(BuildContext context) async {
+    await context.read<AppController>().postAction(operationId, 'accept');
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Demande acceptée. Elle apparaît dans l’onglet Acceptées.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final operation = context.watch<AppController>().operationById(operationId);
@@ -239,9 +310,26 @@ class PdrRequestPage extends StatelessWidget {
           _row('Réseau', operation.networkLabel),
           _row('Numéro', formatPhone(operation.phone)),
           _row('Date', formatDate(operation.createdAt)),
+          if (operation.status == 'pin_required') ...[
+            const SizedBox(height: 16),
+            SoftCard(
+              color: AppColors.brandSoft,
+              child: const Text(
+                'En attente du code PIN Mobile Money du client. La demande reste visible dans Acceptées.',
+                style: TextStyle(height: 1.4),
+              ),
+            ),
+          ],
+          if (operation.status == 'completed') ...[
+            const SizedBox(height: 16),
+            SoftCard(
+              color: AppColors.mintSoft,
+              child: const Text('Cette demande est terminée.', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ],
           const SizedBox(height: 16),
           if (operation.status == 'pending') ...[
-            PrimaryButton(label: 'Accepter', onPressed: () => runAction(context, () => context.read<AppController>().postAction(operation.id, 'accept'))),
+            PrimaryButton(label: 'Accepter', onPressed: () => runAction(context, () => _accept(context))),
             const SizedBox(height: 8),
             GhostButton(label: 'Refuser', onPressed: () => runAction(context, () => context.read<AppController>().postAction(operation.id, 'refuse'))),
           ],

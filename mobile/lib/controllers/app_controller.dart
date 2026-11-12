@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api.dart';
 import '../core/version.dart';
@@ -25,6 +27,12 @@ class AppController extends ChangeNotifier {
   String installedVersion = '1.0.0';
   AppUpdateInfo? pendingUpdate;
   bool updatePromptShown = false;
+  bool sessionReady = false;
+
+  static const _kToken = 'fc_token';
+  static const _kRole = 'fc_role';
+  static const _kPdrId = 'fc_pdr_id';
+  static const _kPhoneId = 'fc_phone_id';
 
   int get unread => notifications.where((item) => !item.isRead).length;
 
@@ -52,8 +60,59 @@ class AppController extends ChangeNotifier {
       final json = await api.send('GET', '/api/settings');
       settings = AppSettings.fromJson(json as Map<String, dynamic>);
       pendingUpdate = _resolveUpdate(settings, installedVersion);
-      notifyListeners();
     } catch (_) {}
+    await _restoreSession();
+    sessionReady = true;
+    notifyListeners();
+  }
+
+  Future<void> _persistSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (token == null || role == 'guest') {
+      await prefs.remove(_kToken);
+      await prefs.remove(_kRole);
+      await prefs.remove(_kPdrId);
+      await prefs.remove(_kPhoneId);
+      return;
+    }
+    await prefs.setString(_kToken, token!);
+    await prefs.setString(_kRole, role);
+    if (pdr != null) {
+      await prefs.setInt(_kPdrId, pdr!.id);
+    } else {
+      await prefs.remove(_kPdrId);
+    }
+    if (selectedPhoneId != null) {
+      await prefs.setInt(_kPhoneId, selectedPhoneId!);
+    }
+  }
+
+  Future<void> _restoreSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedToken = prefs.getString(_kToken);
+    final savedRole = prefs.getString(_kRole);
+    if (savedToken == null || savedRole == null || savedRole == 'guest') return;
+    token = savedToken;
+    role = savedRole;
+    selectedPhoneId = prefs.getInt(_kPhoneId);
+    try {
+      if (role == 'pdr') {
+        final pdrId = prefs.getInt(_kPdrId);
+        if (pdrId == null) throw StateError('pdr');
+        final fresh = await api.send('GET', '/api/pdr/$pdrId', token: token);
+        pdr = PdrPoint.fromJson(fresh as Map<String, dynamic>);
+      }
+      await refreshQuiet();
+      if (role == 'user' && user == null) throw StateError('user');
+      if (role == 'pdr' && pdr == null) throw StateError('pdr');
+      _startSync();
+    } catch (_) {
+      token = null;
+      role = 'guest';
+      user = null;
+      pdr = null;
+      await _persistSession();
+    }
   }
 
   AppUpdateInfo? _resolveUpdate(AppSettings remote, String current) {
@@ -99,6 +158,7 @@ class AppController extends ChangeNotifier {
     role = 'user';
     _applyUser(map['user'] as Map<String, dynamic>);
     await refreshQuiet();
+    await _persistSession();
     _startSync();
     notifyListeners();
   }
@@ -110,6 +170,7 @@ class AppController extends ChangeNotifier {
     role = 'pdr';
     pdr = PdrPoint.fromJson(map['pdr'] as Map<String, dynamic>);
     await refreshQuiet();
+    await _persistSession();
     _startSync();
     notifyListeners();
   }
@@ -122,6 +183,11 @@ class AppController extends ChangeNotifier {
   Future<void> refreshQuiet() async {
     if (token == null) return;
     try {
+      try {
+        final settingsJson = await api.send('GET', '/api/settings');
+        settings = AppSettings.fromJson(settingsJson as Map<String, dynamic>);
+        pendingUpdate = _resolveUpdate(settings, installedVersion);
+      } catch (_) {}
       if (role == 'user') {
         final me = await api.send('GET', '/api/users/me', token: token);
         _applyUser(me as Map<String, dynamic>);
@@ -162,6 +228,39 @@ class AppController extends ChangeNotifier {
     final json = await api.send('GET', '/api/pdr?status=active', token: token);
     directory = (json as List).map((item) => PdrPoint.fromJson(item as Map<String, dynamic>)).toList();
     notifyListeners();
+  }
+
+  int get searchRadiusM => settings.searchRadiusM;
+
+  /// Compte les PDR dans un rayon (info seule, sans lister les points).
+  Future<({int total, int open})> scanZonePdrs({int? maxM}) async {
+    final radius = maxM ?? searchRadiusM;
+    const kinLat = -4.3038;
+    const kinLng = 15.3005;
+    var lat = kinLat;
+    var lng = kinLng;
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        final current = await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 8));
+        final far = Geolocator.distanceBetween(current.latitude, current.longitude, kinLat, kinLng) > 30000;
+        if (!far) {
+          lat = current.latitude;
+          lng = current.longitude;
+        }
+      }
+    } catch (_) {}
+    await loadDirectory();
+    var total = 0;
+    var open = 0;
+    for (final point in directory) {
+      final meters = Geolocator.distanceBetween(lat, lng, point.lat, point.lng);
+      if (meters > radius) continue;
+      total += 1;
+      if (point.isOpen) open += 1;
+    }
+    return (total: total, open: open);
   }
 
   Future<CashOperation> createOperation({required int pdrId, required String phone, required double amount, required String currency, required String type}) async {
@@ -212,6 +311,7 @@ class AppController extends ChangeNotifier {
 
   void useForTransaction(int id) {
     selectedPhoneId = id;
+    unawaited(_persistSession());
     notifyListeners();
   }
 
@@ -247,7 +347,7 @@ class AppController extends ChangeNotifier {
     await refreshQuiet();
   }
 
-  void logout() {
+  Future<void> logout() async {
     _sync?.cancel();
     token = null;
     role = 'guest';
@@ -257,6 +357,7 @@ class AppController extends ChangeNotifier {
     notifications = [];
     ratings = [];
     selectedPhoneId = null;
+    await _persistSession();
     notifyListeners();
   }
 

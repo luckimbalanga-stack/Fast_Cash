@@ -399,6 +399,11 @@ class PhoneField extends StatelessWidget {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(9)],
             decoration: InputDecoration(
               hintText: '81 234 56 78',
+              hintStyle: TextStyle(
+                color: AppColors.muted.withValues(alpha: 0.35),
+                fontWeight: FontWeight.w400,
+                fontSize: 15,
+              ),
               filled: true,
               fillColor: AppColors.mist,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
@@ -443,6 +448,28 @@ Future<void> runAction(BuildContext context, Future<void> Function() action) asy
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message), backgroundColor: AppColors.danger));
   }
+}
+
+Future<void> showZoneScanResult(BuildContext context, {required int total, required int open, int? radiusM}) {
+  final totalLabel = total <= 1 ? '$total PDR trouvé' : '$total PDR trouvés';
+  final openLabel = open <= 1 ? '$open PDR ouvert' : '$open PDR ouverts';
+  final radiusLabel = formatRadiusLabel(radiusM ?? 1000);
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('Scan de zone', style: TextStyle(fontWeight: FontWeight.w800)),
+      content: Text(
+        total == 0
+            ? 'Aucun PDR trouvé dans un rayon de $radiusLabel autour de vous.'
+            : '$totalLabel, dont $openLabel.',
+        style: const TextStyle(color: AppColors.muted, height: 1.4),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('OK')),
+      ],
+    ),
+  );
 }
 
 String initials(String name) {

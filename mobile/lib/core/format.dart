@@ -46,8 +46,12 @@ String formatDate(String? iso) {
 
 String formatDistance(num meters) {
   if (meters < 1000) return '${meters.round()} m';
-  return '${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} km';
+  final km = meters / 1000;
+  if (km == km.roundToDouble()) return '${km.round()} km';
+  return '${km.toStringAsFixed(1).replaceAll('.', ',')} km';
 }
+
+String formatRadiusLabel(int meters) => formatDistance(meters);
 
 String statusLabel(String status, {String? type}) {
   if (type == 'deposit' && status == 'cash_delivered') return 'Espèces reçues';

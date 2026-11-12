@@ -20,6 +20,7 @@ class SettingsWrite(BaseModel):
     fee_percent: float | None = None
     token_minutes: int | None = None
     usd_cdf_rate: float | None = None
+    search_radius_m: int | None = None
     app_version: str | None = None
     app_min_version: str | None = None
     app_download_url: str | None = None

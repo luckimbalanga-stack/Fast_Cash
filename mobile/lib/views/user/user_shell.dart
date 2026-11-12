@@ -67,13 +67,13 @@ class UserShellState extends State<UserShell> {
     _offerPin(operations);
     _offerRating(operations);
     final pages = [
-      HomePage(onSearch: () => openTab(1)),
+      const HomePage(),
       const SearchPage(),
       const HistoryPage(),
       const ProfilePage(),
     ];
     return Scaffold(
-      body: pages[index],
+      body: SafeArea(child: pages[index]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         backgroundColor: Colors.white,
@@ -91,9 +91,27 @@ class UserShellState extends State<UserShell> {
   }
 }
 
-class HomePage extends StatelessWidget {
-  const HomePage({super.key, required this.onSearch});
-  final VoidCallback onSearch;
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  bool scanning = false;
+
+  Future<void> _scanZone() async {
+    setState(() => scanning = true);
+    try {
+      final result = await context.read<AppController>().scanZonePdrs();
+      if (!mounted) return;
+      final radius = context.read<AppController>().searchRadiusM;
+      await showZoneScanResult(context, total: result.total, open: result.open, radiusM: radius);
+    } finally {
+      if (mounted) setState(() => scanning = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,37 +169,51 @@ class HomePage extends StatelessWidget {
         const SizedBox(height: 14),
         Row(
           children: [
-            Expanded(child: _ActionButton(icon: Icons.download_rounded, label: 'Retirer', onTap: () => _openFlow(context, 'withdrawal'))),
+            Expanded(
+              child: _ActionButton(
+                icon: Icons.arrow_downward_rounded,
+                label: 'Retrait',
+                hint: 'Retirer de l’argent',
+                onTap: () => _openFlow(context, 'withdrawal'),
+              ),
+            ),
             const SizedBox(width: 12),
-            Expanded(child: _ActionButton(icon: Icons.upload_rounded, label: 'Déposer', onTap: () => _openFlow(context, 'deposit'))),
+            Expanded(
+              child: _ActionButton(
+                icon: Icons.arrow_upward_rounded,
+                label: 'Dépôt',
+                hint: 'Déposer de l’argent',
+                onTap: () => _openFlow(context, 'deposit'),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 14),
         SoftCard(
-          onTap: onSearch,
+          onTap: scanning ? null : () => runAction(context, _scanZone),
           child: Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Trouver un PDR à proximité', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.night)),
-                  SizedBox(height: 4),
-                  Text('Localisez le point de retrait ou dépôt le plus proche de vous.', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-                  SizedBox(height: 8),
-                  Text('Voir la carte →', style: TextStyle(color: AppColors.brand, fontWeight: FontWeight.w700)),
+                  const Text('Scanner votre zone pour identifier les PDR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  const SizedBox(height: 4),
+                  const Text('Vérifiez s’il y a des points de retrait ouverts près de vous.', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Text(scanning ? 'Scan en cours…' : 'Lancer le scan →', style: const TextStyle(color: AppColors.brand, fontWeight: FontWeight.w700)),
                 ]),
               ),
-              const Icon(Icons.map_rounded, color: AppColors.brand, size: 42),
+              Icon(scanning ? Icons.radar : Icons.my_location_rounded, color: AppColors.brand, size: 42),
             ],
           ),
         ),
         const SizedBox(height: 12),
         SoftCard(
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NumbersPage())),
-          child: Row(children: [
-            const CircleAvatar(backgroundColor: AppColors.brandSoft, child: Icon(Icons.phone_outlined, color: AppColors.brand)),
-            const SizedBox(width: 12),
-            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Mes numéros', style: TextStyle(fontWeight: FontWeight.w800)), Text('Gérez vos numéros et réseaux Mobile Money.', style: TextStyle(color: AppColors.muted, fontSize: 12))])),
-            if (phone != null) NetworkBadge(network: phone.network, label: phone.networkLabel),
+          child: const Row(children: [
+            CircleAvatar(backgroundColor: AppColors.brandSoft, child: Icon(Icons.phone_outlined, color: AppColors.brand)),
+            SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Mes numéros', style: TextStyle(fontWeight: FontWeight.w800)), Text('Gérez vos numéros et réseaux Mobile Money.', style: TextStyle(color: AppColors.muted, fontSize: 12))])),
+            Icon(Icons.chevron_right),
           ]),
         ),
         const SizedBox(height: 12),
@@ -204,9 +236,10 @@ class HomePage extends StatelessWidget {
 }
 
 class _ActionButton extends StatelessWidget {
-  const _ActionButton({required this.icon, required this.label, required this.onTap});
+  const _ActionButton({required this.icon, required this.label, required this.hint, required this.onTap});
   final IconData icon;
   final String label;
+  final String hint;
   final VoidCallback onTap;
 
   @override
@@ -218,14 +251,22 @@ class _ActionButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-          child: Row(children: [
-            Icon(icon, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-            const Spacer(),
-            const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
-          ]),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.18), shape: BoxShape.circle),
+                child: Icon(icon, color: Colors.white, size: 26),
+              ),
+              const SizedBox(height: 12),
+              Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 2),
+              Text(hint, style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 12)),
+            ],
+          ),
         ),
       ),
     );

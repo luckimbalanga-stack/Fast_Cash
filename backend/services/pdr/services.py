@@ -4,9 +4,10 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from services.admin.services import settings_payload
 from shared.models import Pdr, PhoneNumber, Rating
 from shared.serialize import pdr_dict, rating_dict
-from shared.utils import NETWORKS, SEARCH_RADII_M, haversine_m, normalize_phone, now_iso, round_money
+from shared.utils import NETWORKS, haversine_m, normalize_phone, now_iso, round_money
 
 
 def _networks(values: list[str]) -> str:
@@ -97,41 +98,26 @@ def search(
         raise HTTPException(status_code=400, detail="Devise inconnue.")
     rows = db.query(Pdr).filter(Pdr.status == "active", Pdr.is_open.is_(True)).all()
     measured = [(haversine_m(lat, lng, pdr.lat, pdr.lng), pdr) for pdr in rows]
+    # Le rayon admin (Paramètres web) fait foi ; max_m client ne peut que le resserrer.
+    configured = max(100, min(20000, int(settings_payload(db)["search_radius_m"])))
     if max_m is not None:
-        cap = 1000
-        nearby = [
-            (distance, pdr)
-            for distance, pdr in measured
-            if distance <= cap and is_match(pdr, kind, currency, amount, network)
-        ]
-        results = [pdr_dict(pdr, distance_m=distance, available=True) for distance, pdr in nearby]
-        results.sort(key=lambda item: (-float(item["rating_avg"]), float(item["distance_m"])))
-        return {
-            "origin": {"lat": lat, "lng": lng, "simulated": simulated},
-            "radius_m": cap,
-            "currency": currency,
-            "amount": amount,
-            "type": kind,
-            "results": results,
-        }
-    chosen = SEARCH_RADII_M[-1]
-    matched: list[tuple[float, Pdr]] = []
-    for radius in SEARCH_RADII_M:
-        matched = [
-            (distance, pdr)
-            for distance, pdr in measured
-            if distance <= radius and is_match(pdr, kind, currency, amount, network)
-        ]
-        chosen = radius
-        if matched:
-            break
-    results = []
-    for distance, pdr in matched:
-        results.append(pdr_dict(pdr, distance_m=distance, available=True))
-    results.sort(key=lambda item: item["distance_m"])
+        try:
+            client_cap = max(100, min(20000, int(max_m)))
+        except (TypeError, ValueError):
+            client_cap = configured
+        cap = min(configured, client_cap)
+    else:
+        cap = configured
+    nearby = [
+        (distance, pdr)
+        for distance, pdr in measured
+        if distance <= cap and is_match(pdr, kind, currency, amount, network)
+    ]
+    results = [pdr_dict(pdr, distance_m=distance, available=True) for distance, pdr in nearby]
+    results.sort(key=lambda item: (-float(item["rating_avg"]), float(item["distance_m"])))
     return {
         "origin": {"lat": lat, "lng": lng, "simulated": simulated},
-        "radius_m": chosen,
+        "radius_m": cap,
         "currency": currency,
         "amount": amount,
         "type": kind,

@@ -247,12 +247,13 @@ export class AppController {
     const fee = Number(String(input.fee).replace(',', '.'))
     const minutes = Number(input.minutes)
     const rate = Number(String(input.rate).replace(/\s/g, '').replace(',', '.'))
+    const searchRadius = Number(String(input.searchRadius).replace(/\s/g, '').replace(',', '.'))
     const appVersion = String(input.appVersion || '').trim()
     const appMinVersion = String(input.appMinVersion || '').trim()
     const appDownloadUrl = String(input.appDownloadUrl || '').trim()
     const appUpdateMessage = String(input.appUpdateMessage || '').trim()
-    if (!Number.isFinite(fee) || !Number.isFinite(minutes) || !Number.isFinite(rate)) {
-      this.setState({ error: 'Vérifiez les trois valeurs numériques.' })
+    if (!Number.isFinite(fee) || !Number.isFinite(minutes) || !Number.isFinite(rate) || !Number.isFinite(searchRadius)) {
+      this.setState({ error: 'Vérifiez les valeurs numériques.' })
       return Promise.resolve()
     }
     if (!appVersion || !appMinVersion) {
@@ -264,6 +265,7 @@ export class AppController {
         fee_percent: fee,
         token_minutes: minutes,
         usd_cdf_rate: rate,
+        search_radius_m: Math.round(searchRadius),
         app_version: appVersion,
         app_min_version: appMinVersion,
         app_download_url: appDownloadUrl,

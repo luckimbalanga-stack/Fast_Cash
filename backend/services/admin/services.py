@@ -28,6 +28,7 @@ def settings_payload(db: Session) -> dict:
         "fee_percent": float(raw.get("fee_percent", "1")),
         "token_minutes": int(float(raw.get("token_minutes", "30"))),
         "usd_cdf_rate": float(raw.get("usd_cdf_rate", "2880")),
+        "search_radius_m": int(float(raw.get("search_radius_m", "1000"))),
         "banner": raw.get("banner", ""),
         "app_version": raw.get("app_version", APP_SETTING_DEFAULTS["app_version"]),
         "app_min_version": raw.get("app_min_version", APP_SETTING_DEFAULTS["app_min_version"]),
@@ -61,6 +62,11 @@ def update_settings(db: Session, data: dict) -> dict:
         if not 100 <= value <= 20000:
             raise HTTPException(status_code=400, detail="Taux indicatif hors plage.")
         current["usd_cdf_rate"] = value
+    if data.get("search_radius_m") is not None:
+        value = int(data["search_radius_m"])
+        if not 100 <= value <= 20000:
+            raise HTTPException(status_code=400, detail="Le rayon de recherche doit rester entre 100 et 20 000 mètres.")
+        current["search_radius_m"] = value
     if data.get("app_version") is not None:
         value = str(data["app_version"]).strip()
         if not value:
@@ -82,6 +88,7 @@ def update_settings(db: Session, data: dict) -> dict:
         "fee_percent",
         "token_minutes",
         "usd_cdf_rate",
+        "search_radius_m",
         "app_version",
         "app_min_version",
         "app_download_url",

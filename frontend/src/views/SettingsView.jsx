@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppController, useAppState } from '../controllers/context'
 
 function plain(value) {
@@ -12,6 +12,7 @@ export function SettingsView() {
   const [fee, setFee] = useState(plain(settings?.fee_percent ?? 1))
   const [minutes, setMinutes] = useState(String(settings?.token_minutes ?? 30))
   const [rate, setRate] = useState(plain(settings?.usd_cdf_rate ?? 2880))
+  const [searchRadius, setSearchRadius] = useState(String(settings?.search_radius_m ?? 1000))
   const [appVersion, setAppVersion] = useState(settings?.app_version ?? '1.0.0')
   const [appMinVersion, setAppMinVersion] = useState(settings?.app_min_version ?? '1.0.0')
   const [appDownloadUrl, setAppDownloadUrl] = useState(settings?.app_download_url ?? '')
@@ -19,6 +20,21 @@ export function SettingsView() {
     settings?.app_update_message
       ?? 'Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.',
   )
+
+  useEffect(() => {
+    if (!settings) return
+    setFee(plain(settings.fee_percent ?? 1))
+    setMinutes(String(settings.token_minutes ?? 30))
+    setRate(plain(settings.usd_cdf_rate ?? 2880))
+    setSearchRadius(String(settings.search_radius_m ?? 1000))
+    setAppVersion(settings.app_version ?? '1.0.0')
+    setAppMinVersion(settings.app_min_version ?? '1.0.0')
+    setAppDownloadUrl(settings.app_download_url ?? '')
+    setAppUpdateMessage(
+      settings.app_update_message
+        ?? 'Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.',
+    )
+  }, [settings])
 
   return (
     <form
@@ -29,6 +45,7 @@ export function SettingsView() {
           fee,
           minutes,
           rate,
+          searchRadius,
           appVersion,
           appMinVersion,
           appDownloadUrl,
@@ -41,6 +58,11 @@ export function SettingsView() {
       <label>Frais de retrait (%)<input value={fee} onChange={(event) => setFee(event.target.value)} /><small>Entre 0 et 10</small></label>
       <label>Validité du jeton (minutes)<input value={minutes} onChange={(event) => setMinutes(event.target.value)} /><small>Entre 5 et 180</small></label>
       <label>Taux indicatif 1 USD en CDF<input value={rate} onChange={(event) => setRate(event.target.value)} /><small>Entre 100 et 20 000</small></label>
+      <label>
+        Rayon de recherche des PDR (mètres)
+        <input value={searchRadius} onChange={(event) => setSearchRadius(event.target.value)} />
+        <small>Entre 100 et 20 000 — utilisé pour la recherche client et le scan de zone (ex. 1000 = 1 km)</small>
+      </label>
 
       <h3>Mise à jour de l’application mobile</h3>
       <p className="muted">Quand la version publiée est supérieure à celle installée, l’app affiche une popup avec le lien de téléchargement.</p>

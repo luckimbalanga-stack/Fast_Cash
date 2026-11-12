@@ -13,6 +13,7 @@ APP_UPDATE_DEFAULTS = {
     "app_min_version": "1.0.0",
     "app_download_url": "",
     "app_update_message": "Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.",
+    "search_radius_m": "1000",
 }
 
 
@@ -130,6 +131,7 @@ def _seed(db) -> None:
             Setting(key="fee_percent", value="1"),
             Setting(key="token_minutes", value="30"),
             Setting(key="usd_cdf_rate", value="2880"),
+            Setting(key="search_radius_m", value="1000"),
             Setting(key="app_version", value="1.0.0"),
             Setting(key="app_min_version", value="1.0.0"),
             Setting(key="app_download_url", value=""),
