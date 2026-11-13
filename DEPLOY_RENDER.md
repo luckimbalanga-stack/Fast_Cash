@@ -117,32 +117,45 @@ Si le health check échoue : regarde **Logs** sur Render (souvent un service int
 
 ---
 
-## Étape 4 — Brancher le frontend admin (web)
+## Étape 4 — Déployer le frontend admin (web) sur Render
 
-En local, Vite proxifie déjà `/api` vers `http://127.0.0.1:8000`.
+Le blueprint `render.yaml` déclare aussi le service static **`fast-cash-web`**.
 
-Pour parler à l’API Render :
+### Option A — Static Site depuis le Blueprint
+
+1. Dashboard Render → **New** → **Blueprint** (ou ouvre le Blueprint déjà lié au dépôt).
+2. Valide / synchronise : Render crée **`fast-cash-web`** en plus de **`fast-cash-api`**.
+3. Vérifie la variable de build :
+   - `VITE_API_BASE` = `https://fast-cash-api.onrender.com` (sans slash final)
+4. Attends le deploy **Live**.
+5. Ouvre l’URL du site (ex. `https://fast-cash-web.onrender.com`).
+
+### Option B — Static Site manuel
+
+1. **New** → **Static Site**.
+2. Branche le dépôt `luckimbalanga-stack/Fast_Cash`.
+3. Réglages :
+
+| Champ | Valeur |
+|-------|--------|
+| Name | `fast-cash-web` |
+| Root Directory | `frontend` |
+| Build Command | `npm install && npm run build` |
+| Publish Directory | `dist` |
+
+4. Environment → `VITE_API_BASE` = `https://fast-cash-api.onrender.com`
+5. **Create Static Site**.
+
+### En local (dev)
 
 ```powershell
 cd c:\Fast_Cash\frontend
-copy .env.example .env
-notepad .env
-```
-
-Décommente / renseigne :
-
-```
-VITE_API_BASE=https://TON-SERVICE.onrender.com
-```
-
-Puis :
-
-```powershell
+# .env déjà : VITE_API_BASE=https://fast-cash-api.onrender.com
 npm install
 npm run dev
 ```
 
-Ouvre **http://127.0.0.1:5173/** dans ton navigateur pour le voir.
+Ouvre **http://127.0.0.1:5173/**.
 
 Compte admin :
 
@@ -150,8 +163,6 @@ Compte admin :
 |---|---|
 | E-mail | `admin@fastcash.cd` |
 | Mot de passe | `FastCash-2026` |
-
-Ou build de prod : `npm run build` (avec la même variable).
 
 ## Étape 5 — Brancher les applications Android
 
