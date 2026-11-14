@@ -145,7 +145,17 @@ class _LoginPageState extends State<LoginPage> {
           }
         });
       } else if (passwordStep) {
-        await controller.enterPdr(phone.text, password.text);
+        final issued = await controller.enterPdr(phone.text, password.text);
+        setState(() {
+          passwordStep = false;
+          otpStep = true;
+          loginRole = 'pdr';
+          pdrName = issued['pdr_name'] as String? ?? pdrName;
+          previewCode = issued['preview_code'] as String?;
+          code.clear();
+        });
+      } else if (loginRole == 'pdr') {
+        await controller.verifyPdr(phone.text, code.text);
         if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
       } else {
         await controller.verifyUser(phone.text, code.text, 'login');
@@ -169,10 +179,12 @@ class _LoginPageState extends State<LoginPage> {
     final subtitle = passwordStep
         ? 'Entrez le mot de passe configuré pour ${pdrName ?? 'ce point de retrait'}.'
         : otpStep
-            ? 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.'
+            ? (loginRole == 'pdr'
+                ? 'Mot de passe accepté. Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.'
+                : 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.')
             : 'Utilisez le numéro de téléphone de votre compte.';
     final actionLabel = passwordStep
-        ? 'Se connecter'
+        ? 'Continuer'
         : otpStep
             ? 'Vérifier'
             : 'Continuer';

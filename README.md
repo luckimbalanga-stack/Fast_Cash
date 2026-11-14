@@ -16,7 +16,9 @@ Connexion mobile, avec le numéro et le code de vérification.
 
 ## PDR (point de retrait)
 
-Même écran « Se connecter » que le client. Si le numéro appartient à un PDR, l’app demande le **mot de passe** du point (plus d’OTP).
+Même écran « Se connecter » que le client. Si le numéro appartient à un PDR :
+1. **Mot de passe** du point
+2. **OTP** de confirmation (simulé à l’écran / logs tant que le SMS n’est pas branché)
 
 Le mot de passe est défini à la **création du PDR** dans l’admin web. Un admin peut le **réinitialiser** depuis la fiche du point : le nouveau mot de passe s’affiche à l’écran (envoi SMS à brancher plus tard).
 

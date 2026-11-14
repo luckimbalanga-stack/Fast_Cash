@@ -186,20 +186,28 @@ def request_pdr_otp(db: Session, phone_raw: str) -> dict:
 
 
 def verify_pdr_otp(db: Session, phone_raw: str, code: str) -> dict:
-    raise HTTPException(
-        status_code=400,
-        detail="La connexion PDR se fait désormais avec le mot de passe du point de retrait.",
-    )
+    phone = normalize_phone(phone_raw)
+    _consume_otp(db, phone, "pdr", code)
+    pdr = db.query(Pdr).filter(Pdr.phone == phone).one_or_none()
+    if not pdr or pdr.status != "active":
+        raise HTTPException(status_code=403, detail="Connexion PDR impossible.")
+    return {"token": f"pdr:{pdr.id}", "pdr": pdr_dict(pdr)}
 
 
 def enter_pdr(db: Session, phone_raw: str, password: str) -> dict:
+    """Valide le mot de passe PDR puis envoie (ou simule) un OTP de confirmation."""
     phone = normalize_phone(phone_raw)
     pdr = db.query(Pdr).filter(Pdr.phone == phone).one_or_none()
     if not pdr or pdr.status != "active":
         raise HTTPException(status_code=403, detail="Connexion PDR impossible.")
     if not (pdr.password_hash or "").strip() or not verify_password(password, pdr.password_hash):
         raise HTTPException(status_code=401, detail="Numéro ou mot de passe incorrect.")
-    return {"token": f"pdr:{pdr.id}", "pdr": pdr_dict(pdr)}
+    issued = _issue_otp(db, phone, "pdr")
+    issued["role"] = "pdr"
+    issued["requires_otp"] = True
+    issued["pdr_name"] = pdr.name
+    issued["message"] = "Mot de passe accepté. Saisissez le code de vérification."
+    return issued
 
 
 def enter_admin(db: Session, email: str, password: str) -> dict:
