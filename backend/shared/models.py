@@ -34,7 +34,8 @@ class OtpChallenge(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     phone: Mapped[str] = mapped_column(String(20), index=True)
     purpose: Mapped[str] = mapped_column(String(30))
-    code: Mapped[str] = mapped_column(String(6))
+    # SHA-256 hex (64) — pas le code OTP brut à 6 chiffres
+    code: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[str] = mapped_column(String(40))
     consumed: Mapped[bool] = mapped_column(Boolean, default=False)
 

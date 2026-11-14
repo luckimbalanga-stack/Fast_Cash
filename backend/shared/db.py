@@ -101,11 +101,31 @@ def _ensure_admin_password_column() -> None:
         connection.execute(text("ALTER TABLE admins ADD COLUMN password_hash VARCHAR(200) DEFAULT ''"))
 
 
+def _ensure_otp_code_column_width() -> None:
+    """Le hash SHA-256 fait 64 caractères ; l’ancien schéma VARCHAR(6) cassait Neon."""
+    inspector = inspect(engine)
+    if "otp_challenges" not in inspector.get_table_names():
+        return
+    code_col = next((column for column in inspector.get_columns("otp_challenges") if column["name"] == "code"), None)
+    if not code_col:
+        return
+    col_type = str(code_col["type"]).upper()
+    if "64" in col_type or "128" in col_type or "TEXT" in col_type:
+        return
+    with engine.begin() as connection:
+        if IS_SQLITE:
+            # SQLite ignore déjà la longueur ; rien à migrer.
+            return
+        connection.execute(text("ALTER TABLE otp_challenges ALTER COLUMN code TYPE VARCHAR(64)"))
+
+
 def init_database(seed: bool = False) -> None:
     from shared import models  # noqa: F401
 
+    print(f"Fast-Cash DB : {'sqlite' if IS_SQLITE else 'postgres'}", flush=True)
     Base.metadata.create_all(engine)
     _ensure_admin_password_column()
+    _ensure_otp_code_column_width()
     if seed:
         from shared.seed import (
             ensure_app_update_settings,

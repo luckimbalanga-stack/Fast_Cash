@@ -30,6 +30,7 @@ def _otp_hash(code: str) -> str:
 def _issue_otp(db: Session, phone: str, purpose: str) -> dict:
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.add(OtpChallenge(phone=phone, purpose=purpose, code=_otp_hash(code), expires_at=minutes_from_now(5), consumed=False))
+    db.flush()  # remonte tout de suite une erreur de schéma (ex. colonne trop courte)
     payload = {
         "phone": phone,
         "purpose": purpose,
