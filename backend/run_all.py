@@ -1,4 +1,7 @@
-"""Démarre les microservices Fast-Cash (local et Render)."""
+"""Démarre les microservices Fast-Cash (local et Render).
+
+Deploy stamp: auth PDR par mot de passe (/auth/pdr/enter).
+"""
 
 import multiprocessing
 import os
