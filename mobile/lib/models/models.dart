@@ -321,6 +321,7 @@ class AppSettings {
     required this.tokenMinutes,
     required this.usdCdfRate,
     required this.searchRadiusM,
+    required this.pdrOfferSeconds,
     required this.banner,
     required this.appVersion,
     required this.appMinVersion,
@@ -332,6 +333,7 @@ class AppSettings {
   final int tokenMinutes;
   final double usdCdfRate;
   final int searchRadiusM;
+  final int pdrOfferSeconds;
   final String banner;
   final String appVersion;
   final String appMinVersion;
@@ -343,6 +345,7 @@ class AppSettings {
     tokenMinutes: 30,
     usdCdfRate: 2880,
     searchRadiusM: 1000,
+    pdrOfferSeconds: 30,
     banner: '',
     appVersion: '1.0.0',
     appMinVersion: '1.0.0',
@@ -355,6 +358,7 @@ class AppSettings {
         tokenMinutes: json['token_minutes'] as int? ?? 30,
         usdCdfRate: (json['usd_cdf_rate'] as num?)?.toDouble() ?? 2880,
         searchRadiusM: (json['search_radius_m'] as num?)?.toInt() ?? 1000,
+        pdrOfferSeconds: ((json['pdr_offer_seconds'] as num?)?.toInt() ?? 30).clamp(5, 120),
         banner: json['banner'] as String? ?? '',
         appVersion: json['app_version'] as String? ?? '1.0.0',
         appMinVersion: json['app_min_version'] as String? ?? '1.0.0',

@@ -8,6 +8,7 @@ import '../../core/format.dart';
 import '../../models/models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/widgets.dart';
+import 'incoming_call.dart';
 
 class PdrShell extends StatefulWidget {
   const PdrShell({super.key});
@@ -18,12 +19,105 @@ class PdrShell extends StatefulWidget {
 
 class _PdrShellState extends State<PdrShell> {
   int index = 0;
+  int? _shownCallId;
+  bool _openingCall = false;
+
+  int _offerSeconds(AppController controller) => controller.settings.pdrOfferSeconds.clamp(5, 120);
+
+  CashOperation? _liveIncoming(AppController controller) {
+    final wait = _offerSeconds(controller);
+    final candidates = controller.operations.where((op) => IncomingRequestCall.isLive(op, wait)).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
+  Future<void> _ensureIncomingCall(CashOperation? incoming) async {
+    if (!mounted || _openingCall) return;
+    if (incoming == null) return;
+    if (_shownCallId == incoming.id) return;
+
+    _openingCall = true;
+    _shownCallId = incoming.id;
+    final operationId = incoming.id;
+    final messenger = ScaffoldMessenger.of(context);
+    final controller = context.read<AppController>();
+
+    try {
+      await showGeneralDialog<void>(
+        context: context,
+        useRootNavigator: true,
+        barrierDismissible: false,
+        barrierColor: Colors.black,
+        pageBuilder: (dialogContext, animation, secondaryAnimation) {
+          return PopScope(
+            canPop: false,
+            child: Consumer<AppController>(
+              builder: (context, liveController, _) {
+                final wait = _offerSeconds(liveController);
+                final current = liveController.operationById(operationId);
+                if (current == null || !IncomingRequestCall.isLive(current, wait)) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+                      Navigator.of(dialogContext, rootNavigator: true).pop();
+                    }
+                  });
+                  return const SizedBox.shrink();
+                }
+                return IncomingRequestCall(
+                  key: ValueKey('incoming-$operationId-$wait'),
+                  operation: current,
+                  waitSeconds: wait,
+                  onExpired: () {
+                    if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+                      Navigator.of(dialogContext, rootNavigator: true).pop();
+                    }
+                  },
+                  onAccept: () async {
+                    try {
+                      await liveController.postAction(operationId, 'accept');
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('Demande acceptée. Elle apparaît dans Acceptées.')),
+                      );
+                    } on ApiException catch (error) {
+                      messenger.showSnackBar(SnackBar(content: Text(error.message), backgroundColor: AppColors.danger));
+                      rethrow;
+                    }
+                  },
+                  onRefuse: () async {
+                    try {
+                      await liveController.postAction(operationId, 'refuse');
+                    } on ApiException catch (error) {
+                      messenger.showSnackBar(SnackBar(content: Text(error.message), backgroundColor: AppColors.danger));
+                      rethrow;
+                    }
+                  },
+                );
+              },
+            ),
+          );
+        },
+      );
+    } finally {
+      if (_shownCallId == operationId) _shownCallId = null;
+      _openingCall = false;
+      if (mounted && _liveIncoming(controller) != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _ensureIncomingCall(_liveIncoming(controller));
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final incoming = _liveIncoming(controller);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureIncomingCall(incoming));
+
     final pages = [const PdrHomePage(), const PdrRequestsPage(), const PdrScanPage(), const PdrHistoryPage(), const PdrProfilePage()];
     return Scaffold(
-      body: pages[index],
+      body: SafeArea(child: pages[index]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         backgroundColor: Colors.white,
@@ -54,7 +148,6 @@ class PdrHomePage extends StatelessWidget {
       final now = DateTime.now();
       return date.year == now.year && date.month == now.month && date.day == now.day;
     }).length;
-    final pending = controller.operations.where((operation) => operation.status == 'pending').length;
     final accepted = controller.operations.where(_isAcceptedRequest).length;
     final completed = controller.operations.where(_isCompletedRequest).length;
     return ListView(
@@ -95,14 +188,12 @@ class PdrHomePage extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Row(children: [
-          _Stat(value: '$pending', label: 'En attente', color: AppColors.brandSoft),
-          const SizedBox(width: 8),
           _Stat(value: '$accepted', label: 'Acceptées', color: const Color(0xFFE8F1FF)),
           const SizedBox(width: 8),
           _Stat(value: '$completed', label: 'Terminées', color: AppColors.mintSoft),
+          const SizedBox(width: 8),
+          _Stat(value: '$today', label: 'Aujourd’hui', color: AppColors.brandSoft),
         ]),
-        const SizedBox(height: 4),
-        Text('Transactions du jour : $today', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
         const SizedBox(height: 8),
         SoftCard(
           color: AppColors.mintSoft,
@@ -116,17 +207,13 @@ class PdrHomePage extends StatelessWidget {
         const SizedBox(height: 8),
         SoftCard(
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage())),
-          child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.hourglass_empty_rounded, color: AppColors.brand), title: Text('Demandes en attente'), subtitle: Text('Accepter ou refuser les clients'), trailing: Icon(Icons.chevron_right)),
-        ),
-        SoftCard(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage(initialTab: 1))),
           child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.handshake_outlined, color: AppColors.brand), title: const Text('Demandes acceptées'), subtitle: Text(accepted == 0 ? 'Aucune opération en cours' : '$accepted opération${accepted > 1 ? 's' : ''} en cours'), trailing: const Icon(Icons.chevron_right)),
         ),
         SoftCard(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage(initialTab: 2))),
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrRequestsPage(initialTab: 1))),
           child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.check_circle_outline, color: AppColors.brand), title: const Text('Demandes terminées'), subtitle: Text(completed == 0 ? 'Aucune opération clôturée' : '$completed opération${completed > 1 ? 's' : ''} clôturée${completed > 1 ? 's' : ''}'), trailing: const Icon(Icons.chevron_right)),
         ),
-        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrScanPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.qr_code_scanner, color: AppColors.brand), title: Text('Vérifier un jeton'), subtitle: Text('Scanner ou saisir un code'), trailing: Icon(Icons.chevron_right))),
+        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrScanPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.qr_code_scanner, color: AppColors.brand), title: Text('Vérifier un jeton'), subtitle: Text('Uniquement pour les demandes que vous avez acceptées'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Déclarer USD, CDF et les dépôts'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RatingsPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.star_outline, color: AppColors.brand), title: Text('Évaluations reçues'), trailing: Icon(Icons.chevron_right))),
       ],
@@ -198,19 +285,18 @@ bool _isCompletedRequest(CashOperation operation) => operation.status == 'comple
 class PdrRequestsPage extends StatelessWidget {
   const PdrRequestsPage({super.key, this.initialTab = 0});
 
-  /// 0 = En attente, 1 = Acceptées, 2 = Terminées
+  /// 0 = Acceptées, 1 = Terminées
   final int initialTab;
 
   @override
   Widget build(BuildContext context) {
     final operations = context.watch<AppController>().operations;
-    final pendingCount = operations.where((op) => op.status == 'pending').length;
     final acceptedCount = operations.where(_isAcceptedRequest).length;
     final completedCount = operations.where(_isCompletedRequest).length;
     final canPop = Navigator.canPop(context);
     final content = DefaultTabController(
-      length: 3,
-      initialIndex: initialTab.clamp(0, 2),
+      length: 2,
+      initialIndex: initialTab.clamp(0, 1),
       child: Column(children: [
         if (!canPop) ...[
           const SizedBox(height: 8),
@@ -221,17 +307,12 @@ class PdrRequestsPage extends StatelessWidget {
           labelColor: AppColors.brand,
           indicatorColor: AppColors.brand,
           tabs: [
-            Tab(text: pendingCount > 0 ? 'En attente ($pendingCount)' : 'En attente'),
             Tab(text: acceptedCount > 0 ? 'Acceptées ($acceptedCount)' : 'Acceptées'),
             Tab(text: completedCount > 0 ? 'Terminées ($completedCount)' : 'Terminées'),
           ],
         ),
         Expanded(
           child: TabBarView(children: [
-            _RequestList(
-              match: (operation) => operation.status == 'pending',
-              emptyLabel: 'Aucune demande en attente',
-            ),
             _RequestList(
               match: _isAcceptedRequest,
               emptyLabel: 'Aucune demande acceptée en cours',
@@ -283,14 +364,6 @@ class PdrRequestPage extends StatelessWidget {
   const PdrRequestPage({super.key, required this.operationId});
   final int operationId;
 
-  Future<void> _accept(BuildContext context) async {
-    await context.read<AppController>().postAction(operationId, 'accept');
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Demande acceptée. Elle apparaît dans l’onglet Acceptées.')),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final operation = context.watch<AppController>().operationById(operationId);
@@ -310,6 +383,16 @@ class PdrRequestPage extends StatelessWidget {
           _row('Réseau', operation.networkLabel),
           _row('Numéro', formatPhone(operation.phone)),
           _row('Date', formatDate(operation.createdAt)),
+          if (operation.status == 'pending') ...[
+            const SizedBox(height: 16),
+            SoftCard(
+              color: AppColors.waitingSoft,
+              child: const Text(
+                'Cette demande s’affiche comme un appel entrant. Validez ou refusez depuis l’écran d’appel.',
+                style: TextStyle(height: 1.4),
+              ),
+            ),
+          ],
           if (operation.status == 'pin_required') ...[
             const SizedBox(height: 16),
             SoftCard(
@@ -328,11 +411,6 @@ class PdrRequestPage extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 16),
-          if (operation.status == 'pending') ...[
-            PrimaryButton(label: 'Accepter', onPressed: () => runAction(context, () => _accept(context))),
-            const SizedBox(height: 8),
-            GhostButton(label: 'Refuser', onPressed: () => runAction(context, () => context.read<AppController>().postAction(operation.id, 'refuse'))),
-          ],
           if (!operation.isWithdrawal && operation.status == 'accepted')
             PrimaryButton(label: 'Confirmer la réception des espèces', onPressed: () => runAction(context, () => context.read<AppController>().postAction(operation.id, 'confirm-cash'))),
           if (operation.isWithdrawal && operation.tokenCode != null && operation.status == 'payment_confirmed')
@@ -359,10 +437,20 @@ class PdrScanPage extends StatefulWidget {
 class _PdrScanPageState extends State<PdrScanPage> {
   late final TextEditingController code = TextEditingController(text: widget.initialCode ?? '');
   final MobileScannerController camera = MobileScannerController(detectionSpeed: DetectionSpeed.normal, facing: CameraFacing.back);
-  Map<String, dynamic>? preview;
+  CashOperation? result;
+  String? errorMessage;
   bool manual = false;
-  bool _handlingScan = false;
+  bool _busy = false;
   String? _lastScanned;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialCode?.trim();
+    if (initial != null && initial.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _processCode(initial));
+    }
+  }
 
   @override
   void dispose() {
@@ -371,69 +459,66 @@ class _PdrScanPageState extends State<PdrScanPage> {
     super.dispose();
   }
 
-  Future<Map<String, dynamic>> _lookup() async {
-    final result = await context.read<AppController>().lookupToken(code.text);
-    setState(() => preview = result);
-    return result;
-  }
-
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (manual || _handlingScan) return;
+    if (manual || _busy) return;
     final value = capture.barcodes
         .map((item) => item.rawValue?.trim())
         .whereType<String>()
         .firstWhere((item) => item.isNotEmpty, orElse: () => '');
     if (value.isEmpty || value == _lastScanned) return;
-    _handlingScan = true;
-    _lastScanned = value;
-    setState(() {
-      code.text = value.toUpperCase();
-      preview = null;
-    });
-    try {
-      await _lookup();
-    } catch (error) {
-      if (mounted) {
-        final message = error is ApiException ? error.message : 'Lecture du jeton impossible.';
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: AppColors.danger));
-      }
-    } finally {
-      _handlingScan = false;
-    }
+    await _processCode(value);
   }
 
-  Future<void> _validate() async {
+  Future<void> _processCode(String raw) async {
+    if (_busy) return;
+    final normalized = raw.trim().toUpperCase();
+    if (normalized.isEmpty) return;
+    _busy = true;
+    _lastScanned = normalized;
+    setState(() {
+      code.text = normalized;
+      result = null;
+      errorMessage = null;
+    });
+    final messenger = ScaffoldMessenger.of(context);
     final controller = context.read<AppController>();
-    final current = preview ?? await _lookup();
-    if (!mounted) return;
-    if (current['redeemable'] != true) {
-      throw ApiException(current['error']?.toString() ?? 'Ce jeton ne peut pas être validé.');
+    try {
+      final preview = await controller.lookupToken(normalized);
+      if (!mounted) return;
+      if (preview['redeemable'] != true) {
+        final message = preview['error']?.toString() ?? 'Ce jeton ne peut pas être validé.';
+        setState(() {
+          errorMessage = message;
+          result = CashOperation.fromJson(preview);
+        });
+        messenger.showSnackBar(SnackBar(content: Text(message), backgroundColor: AppColors.danger));
+        return;
+      }
+      final completed = await controller.redeemToken(normalized);
+      if (!mounted) return;
+      setState(() => result = completed);
+      final done = completed.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué';
+      messenger.showSnackBar(SnackBar(content: Text(done), backgroundColor: AppColors.mint));
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is ApiException ? error.message : 'Lecture du jeton impossible.';
+      setState(() => errorMessage = message);
+      messenger.showSnackBar(SnackBar(content: Text(message), backgroundColor: AppColors.danger));
+      _lastScanned = null;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _busy = false;
     }
-    await controller.redeemToken(code.text);
-    if (!mounted) return;
-    setState(() {
-      preview = null;
-      _lastScanned = null;
-    });
-    code.clear();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Scan validé. L’opération passe à Scan effectué, puis Terminée après la note client.')));
-  }
-
-  Future<void> _refuse() async {
-    final id = preview?['id'];
-    if (id is int) await context.read<AppController>().postAction(id, 'cancel');
-    if (!mounted) return;
-    setState(() {
-      preview = null;
-      _lastScanned = null;
-    });
-    code.clear();
   }
 
   @override
   Widget build(BuildContext context) {
-    final operation = preview == null ? null : CashOperation.fromJson(preview!);
     final canPop = Navigator.canPop(context);
+    final doneLabel = result == null
+        ? null
+        : result!.isWithdrawal
+            ? 'Retrait effectué'
+            : 'Dépôt effectué';
     return Scaffold(
       appBar: canPop ? AppBar(title: const Text('Vérifier le jeton')) : null,
       body: ListView(
@@ -441,7 +526,7 @@ class _PdrScanPageState extends State<PdrScanPage> {
         children: [
           const Text('Vérifier le token PDR', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
           const SizedBox(height: 6),
-          const Text('Scannez le QR code du client ou saisissez le code manuellement.', style: TextStyle(color: AppColors.muted, height: 1.35)),
+          const Text('Scannez le QR code du client : la demande est validée automatiquement.', style: TextStyle(color: AppColors.muted, height: 1.35)),
           const SizedBox(height: 14),
           Row(children: [
             Expanded(
@@ -449,10 +534,12 @@ class _PdrScanPageState extends State<PdrScanPage> {
                 label: 'Scanner',
                 icon: Icons.qr_code_scanner_rounded,
                 selected: !manual,
-                onTap: () => setState(() {
-                  manual = false;
-                  camera.start();
-                }),
+                onTap: _busy
+                    ? null
+                    : () => setState(() {
+                          manual = false;
+                          camera.start();
+                        }),
               ),
             ),
             const SizedBox(width: 10),
@@ -461,10 +548,12 @@ class _PdrScanPageState extends State<PdrScanPage> {
                 label: 'Saisir un code',
                 icon: Icons.dialpad_rounded,
                 selected: manual,
-                onTap: () => setState(() {
-                  manual = true;
-                  camera.stop();
-                }),
+                onTap: _busy
+                    ? null
+                    : () => setState(() {
+                          manual = true;
+                          camera.stop();
+                        }),
               ),
             ),
           ]),
@@ -477,15 +566,23 @@ class _PdrScanPageState extends State<PdrScanPage> {
                 child: Stack(fit: StackFit.expand, children: [
                   MobileScanner(controller: camera, onDetect: _onDetect),
                   const IgnorePointer(child: Center(child: SizedBox(width: 200, height: 200, child: CustomPaint(painter: _ScanCorners())))),
+                  if (_busy)
+                    ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+                    ),
                 ]),
               ),
             ),
           if (manual) ...[
-            const SizedBox(height: 0),
             TextField(
               controller: code,
+              enabled: !_busy,
               textCapitalization: TextCapitalization.characters,
-              onChanged: (_) => setState(() => preview = null),
+              onChanged: (_) => setState(() {
+                result = null;
+                errorMessage = null;
+              }),
               decoration: InputDecoration(
                 hintText: 'FC-4829-7714',
                 filled: true,
@@ -494,7 +591,14 @@ class _PdrScanPageState extends State<PdrScanPage> {
               ),
             ),
             const SizedBox(height: 12),
-            PrimaryButton(label: 'Vérifier le code', onPressed: code.text.trim().isEmpty ? null : () => runAction(context, () async { await _lookup(); })),
+            PrimaryButton(
+              label: _busy ? 'Traitement…' : 'Valider le code',
+              onPressed: _busy || code.text.trim().isEmpty ? null : () => _processCode(code.text),
+            ),
+            if (_busy) ...[
+              const SizedBox(height: 16),
+              const Center(child: CircularProgressIndicator(color: AppColors.brand)),
+            ],
           ],
           if (!manual && code.text.trim().isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -506,25 +610,41 @@ class _PdrScanPageState extends State<PdrScanPage> {
             child: const Row(children: [
               Icon(Icons.info_outline_rounded, color: AppColors.brand),
               SizedBox(width: 10),
-              Expanded(child: Text('Autorisez la caméra puis scannez le QR du client.\nLe jeton reste valide jusqu’à la validation.', style: TextStyle(height: 1.35))),
+              Expanded(
+                child: Text(
+                  'Le scan lance la recherche puis clôture automatiquement la demande. Seul le PDR qui a accepté peut valider ce ticket.',
+                  style: TextStyle(height: 1.35),
+                ),
+              ),
             ]),
           ),
-          if (operation != null) ...[
+          if (result != null) ...[
             const SizedBox(height: 12),
-            SoftCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(operation.userName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-              Text(formatMoney(operation.amount, operation.currency), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.brand)),
-              Text('Jeton ${operation.tokenCode ?? code.text}'),
-              Text('Statut : ${statusLabel(operation.status, type: operation.type)}', style: const TextStyle(color: AppColors.muted)),
-              if (preview?['error'] != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(preview!['error'].toString(), style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700))),
-            ])),
+            SoftCard(
+              color: result!.status == 'completed' ? AppColors.mintSoft : Colors.white,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (result!.status == 'completed' && doneLabel != null) ...[
+                  Text(doneLabel, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: AppColors.mint)),
+                  const SizedBox(height: 8),
+                ],
+                Text(result!.userName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                Text(formatMoney(result!.amount, result!.currency), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.brand)),
+                Text('Jeton ${result!.tokenCode ?? code.text}'),
+                Text('Statut : ${statusLabel(result!.status, type: result!.type)}', style: const TextStyle(color: AppColors.muted)),
+                if (errorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(errorMessage!, style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
+                  ),
+              ]),
+            ),
+          ] else if (errorMessage != null) ...[
+            const SizedBox(height: 12),
+            SoftCard(
+              color: AppColors.dangerSoft,
+              child: Text(errorMessage!, style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
+            ),
           ],
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(child: GhostButton(label: 'Refuser', onPressed: code.text.trim().isEmpty ? null : () => runAction(context, _refuse))),
-            const SizedBox(width: 8),
-            Expanded(child: PrimaryButton(label: 'Valider l’opération', icon: Icons.arrow_forward_rounded, onPressed: code.text.trim().isEmpty ? null : () => runAction(context, _validate))),
-          ]),
         ],
       ),
     );
@@ -536,7 +656,7 @@ class _ModeButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -661,7 +781,9 @@ class _PdrHistoryPageState extends State<PdrHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final historyStatuses = statusLabels.keys.where((key) => key != 'pending').toList();
     final items = context.watch<AppController>().operations.where((operation) {
+      if (operation.status == 'pending') return false;
       if (type != 'all' && operation.type != type) return false;
       if (status != null && operation.status != status) return false;
       if (currency != null && operation.currency != currency) return false;
@@ -681,9 +803,12 @@ class _PdrHistoryPageState extends State<PdrHistoryPage> {
         ]),
         const SizedBox(height: 8),
         DropdownButton<String?>(
-          value: status,
+          value: status == 'pending' ? null : status,
           hint: const Text('Statut'),
-          items: [const DropdownMenuItem<String?>(value: null, child: Text('Tous les statuts')), ...statusLabels.keys.map((key) => DropdownMenuItem(value: key, child: Text(statusLabels[key]!)))],
+          items: [
+            const DropdownMenuItem<String?>(value: null, child: Text('Tous les statuts')),
+            ...historyStatuses.map((key) => DropdownMenuItem(value: key, child: Text(statusLabels[key]!))),
+          ],
           onChanged: (value) => setState(() => status = value),
         ),
         ...items.map((operation) => ListTile(
@@ -740,6 +865,12 @@ class _PdrNotes extends StatelessWidget {
         onOpen: (item) async {
           if (!item.isRead) await runAction(context, () => controller.markRead(item.id));
           if (!context.mounted || item.operationId == null) return;
+          final operation = controller.operationById(item.operationId!);
+          final wait = controller.settings.pdrOfferSeconds.clamp(5, 120);
+          if (operation != null && IncomingRequestCall.isLive(operation, wait)) {
+            Navigator.pop(context);
+            return;
+          }
           Navigator.push(context, MaterialPageRoute(builder: (_) => PdrRequestPage(operationId: item.operationId!)));
         },
       ),

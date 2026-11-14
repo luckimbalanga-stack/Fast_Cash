@@ -43,3 +43,8 @@ class StatusUpdate(BaseModel):
 class AdminEnter(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=80)
+
+
+class PdrEnter(BaseModel):
+    phone: str
+    password: str = Field(min_length=8, max_length=80)

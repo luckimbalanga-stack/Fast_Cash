@@ -24,6 +24,7 @@ APP_SETTING_DEFAULTS = {
     "app_min_version": "1.0.0",
     "app_download_url": "",
     "app_update_message": "Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.",
+    "pdr_offer_seconds": "30",
 }
 
 
@@ -38,6 +39,7 @@ def settings_payload(db: Session) -> dict:
         "token_minutes": int(float(raw.get("token_minutes", "30"))),
         "usd_cdf_rate": float(raw.get("usd_cdf_rate", "2880")),
         "search_radius_m": int(float(raw.get("search_radius_m", "1000"))),
+        "pdr_offer_seconds": int(float(raw.get("pdr_offer_seconds", APP_SETTING_DEFAULTS.get("pdr_offer_seconds", "30")))),
         "banner": raw.get("banner", ""),
         "app_version": raw.get("app_version", APP_SETTING_DEFAULTS["app_version"]),
         "app_min_version": raw.get("app_min_version", APP_SETTING_DEFAULTS["app_min_version"]),
@@ -76,6 +78,11 @@ def update_settings(db: Session, data: dict) -> dict:
         if not 100 <= value <= 20000:
             raise HTTPException(status_code=400, detail="Le rayon de recherche doit rester entre 100 et 20 000 mètres.")
         current["search_radius_m"] = value
+    if data.get("pdr_offer_seconds") is not None:
+        value = int(data["pdr_offer_seconds"])
+        if not 5 <= value <= 120:
+            raise HTTPException(status_code=400, detail="Le délai d'acceptation PDR doit rester entre 5 et 120 secondes.")
+        current["pdr_offer_seconds"] = value
     if data.get("app_version") is not None:
         value = str(data["app_version"]).strip()
         if not value:
@@ -98,6 +105,7 @@ def update_settings(db: Session, data: dict) -> dict:
         "token_minutes",
         "usd_cdf_rate",
         "search_radius_m",
+        "pdr_offer_seconds",
         "app_version",
         "app_min_version",
         "app_download_url",

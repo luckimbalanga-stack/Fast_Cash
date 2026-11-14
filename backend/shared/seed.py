@@ -7,6 +7,7 @@ from shared.models import AdminUser, Pdr, PhoneNumber, Setting, User
 from shared.utils import KINSHASA, hash_password
 
 INITIAL_ADMIN_PASSWORD = "FastCash-2026"
+INITIAL_PDR_PASSWORD = "PdrGombe-2026"
 
 APP_UPDATE_DEFAULTS = {
     "app_version": "1.0.0",
@@ -14,6 +15,7 @@ APP_UPDATE_DEFAULTS = {
     "app_download_url": "",
     "app_update_message": "Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.",
     "search_radius_m": "1000",
+    "pdr_offer_seconds": "30",
 }
 
 
@@ -23,6 +25,21 @@ def ensure_initial_admin_password() -> None:
         admin = db.query(AdminUser).filter(AdminUser.email == "admin@fastcash.cd").one_or_none()
         if admin and not (admin.password_hash or "").strip():
             admin.password_hash = hash_password(INITIAL_ADMIN_PASSWORD)
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def ensure_seed_pdr_password() -> None:
+    """Attribue un mot de passe au PDR de démo s’il n’en a pas encore."""
+    db = SessionLocal()
+    try:
+        pdr = db.query(Pdr).filter(Pdr.code == "FC-PDR-001").one_or_none()
+        if pdr and not (pdr.password_hash or "").strip():
+            pdr.password_hash = hash_password(INITIAL_PDR_PASSWORD)
             db.commit()
     except Exception:
         db.rollback()
@@ -113,6 +130,7 @@ def _seed(db) -> None:
             opening_hours="07:00 - 20:00",
             rating_avg=5,
             rating_count=0,
+            password_hash=hash_password(INITIAL_PDR_PASSWORD),
             created_at=now,
         )
     )
@@ -132,6 +150,7 @@ def _seed(db) -> None:
             Setting(key="token_minutes", value="30"),
             Setting(key="usd_cdf_rate", value="2880"),
             Setting(key="search_radius_m", value="1000"),
+            Setting(key="pdr_offer_seconds", value="30"),
             Setting(key="app_version", value="1.0.0"),
             Setting(key="app_min_version", value="1.0.0"),
             Setting(key="app_download_url", value=""),

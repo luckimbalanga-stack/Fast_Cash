@@ -7,7 +7,7 @@ const statusLabels = {
   'refused': 'Refusée',
   'payment_pending': 'Paiement en attente',
   'payment_confirmed': 'Paiement confirmé',
-  'cash_delivered': 'Scan effectué',
+  'cash_delivered': 'Retrait effectué',
   'completed': 'Terminée',
   'cancelled': 'Annulée',
 };

@@ -7,6 +7,7 @@ class PdrWrite(BaseModel):
     name: str = Field(min_length=2)
     manager_name: str = Field(min_length=2)
     phone: str
+    password: str = Field(min_length=8, max_length=80)
     address: str = Field(min_length=3)
     commune: str = Field(min_length=2)
     city: str = "Kinshasa"
@@ -26,6 +27,7 @@ class PdrPatch(BaseModel):
     name: str | None = None
     manager_name: str | None = None
     phone: str | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=80)
     address: str | None = None
     commune: str | None = None
     city: str | None = None
@@ -36,6 +38,10 @@ class PdrPatch(BaseModel):
     is_open: bool | None = None
     accepts_deposits: bool | None = None
     opening_hours: str | None = None
+
+
+class PdrPasswordReset(BaseModel):
+    password: str | None = Field(default=None, min_length=8, max_length=80)
 
 
 class AvailabilityWrite(BaseModel):

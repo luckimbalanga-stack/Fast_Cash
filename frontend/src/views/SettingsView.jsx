@@ -13,6 +13,7 @@ export function SettingsView() {
   const [minutes, setMinutes] = useState(String(settings?.token_minutes ?? 30))
   const [rate, setRate] = useState(plain(settings?.usd_cdf_rate ?? 2880))
   const [searchRadius, setSearchRadius] = useState(String(settings?.search_radius_m ?? 1000))
+  const [pdrOfferSeconds, setPdrOfferSeconds] = useState(String(settings?.pdr_offer_seconds ?? 30))
   const [appVersion, setAppVersion] = useState(settings?.app_version ?? '1.0.0')
   const [appMinVersion, setAppMinVersion] = useState(settings?.app_min_version ?? '1.0.0')
   const [appDownloadUrl, setAppDownloadUrl] = useState(settings?.app_download_url ?? '')
@@ -27,6 +28,7 @@ export function SettingsView() {
     setMinutes(String(settings.token_minutes ?? 30))
     setRate(plain(settings.usd_cdf_rate ?? 2880))
     setSearchRadius(String(settings.search_radius_m ?? 1000))
+    setPdrOfferSeconds(String(settings.pdr_offer_seconds ?? 30))
     setAppVersion(settings.app_version ?? '1.0.0')
     setAppMinVersion(settings.app_min_version ?? '1.0.0')
     setAppDownloadUrl(settings.app_download_url ?? '')
@@ -46,6 +48,7 @@ export function SettingsView() {
           minutes,
           rate,
           searchRadius,
+          pdrOfferSeconds,
           appVersion,
           appMinVersion,
           appDownloadUrl,
@@ -62,6 +65,11 @@ export function SettingsView() {
         Rayon de recherche des PDR (mètres)
         <input value={searchRadius} onChange={(event) => setSearchRadius(event.target.value)} />
         <small>Entre 100 et 20 000 — utilisé pour la recherche client et le scan de zone (ex. 1000 = 1 km)</small>
+      </label>
+      <label>
+        Délai d’acceptation PDR (secondes)
+        <input value={pdrOfferSeconds} onChange={(event) => setPdrOfferSeconds(event.target.value)} />
+        <small>Entre 5 et 120 — temps laissé à chaque PDR pour valider ou refuser avant le suivant</small>
       </label>
 
       <h3>Mise à jour de l’application mobile</h3>

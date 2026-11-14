@@ -14,9 +14,11 @@ Connexion mobile, avec le numéro et le code de vérification.
 | Numéro | +243 810 123 456 |
 | Réseau | Orange Money |
 
-## Vendeur
+## PDR (point de retrait)
 
-Même écran de connexion que le client. Ce numéro ouvre l’espace du point de retrait.
+Même écran « Se connecter » que le client. Si le numéro appartient à un PDR, l’app demande le **mot de passe** du point (plus d’OTP).
+
+Le mot de passe est défini à la **création du PDR** dans l’admin web. Un admin peut le **réinitialiser** depuis la fiche du point : le nouveau mot de passe s’affiche à l’écran (envoi SMS à brancher plus tard).
 
 | | |
 |---|---|
@@ -24,6 +26,7 @@ Même écran de connexion que le client. Ce numéro ouvre l’espace du point de
 | Code | FC-PDR-001 |
 | Responsable | Aline Mputu |
 | Numéro | +243 815 000 001 |
+| Mot de passe | PdrGombe-2026 |
 | Adresse | 12 Avenue du Commerce, Gombe, Kinshasa |
 
 ## Administration web
@@ -37,7 +40,7 @@ Connexion par e-mail et mot de passe.
 | Mot de passe | FastCash-2026 |
 | Rôle | Super administrateur |
 
-La passerelle SMS n’est pas branchée. Le code de vérification mobile s’affiche à l’écran et dans la console du serveur. Il est valable cinq minutes.
+La passerelle SMS n’est pas branchée. Pour les **clients**, le code OTP s’affiche à l’écran et dans la console du serveur (valable cinq minutes). Pour les **PDR**, la connexion utilise uniquement le mot de passe.
 
 ## Déploiement
 

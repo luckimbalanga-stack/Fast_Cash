@@ -43,7 +43,7 @@ class UserShellState extends State<UserShell> {
 
   void _offerRating(List<CashOperation> operations) {
     if (promptingId != null) return;
-    final waiting = operations.where((operation) => operation.isWithdrawal && operation.status == 'cash_delivered' && operation.ratingStars == null);
+    final waiting = operations.where((operation) => operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed') && operation.ratingStars == null);
     if (waiting.isEmpty) {
       ratingPromptId = null;
       return;
@@ -56,7 +56,9 @@ class UserShellState extends State<UserShell> {
       await showRatingDialog(context, operation);
       if (!mounted) return;
       final stillWaiting = context.read<AppController>().operationById(operation.id);
-      final pending = stillWaiting != null && stillWaiting.status == 'cash_delivered' && stillWaiting.ratingStars == null;
+      final pending = stillWaiting != null &&
+          (stillWaiting.status == 'cash_delivered' || stillWaiting.status == 'completed') &&
+          stillWaiting.ratingStars == null;
       if (!pending) setState(() => ratingPromptId = null);
     });
   }

@@ -109,15 +109,20 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final phone = TextEditingController();
   final code = TextEditingController();
+  final password = TextEditingController();
   bool otpStep = false;
+  bool passwordStep = false;
   bool busy = false;
+  bool showPassword = false;
   String? previewCode;
+  String? pdrName;
   String loginRole = 'user';
 
   @override
   void dispose() {
     phone.dispose();
     code.dispose();
+    password.dispose();
     super.dispose();
   }
 
@@ -125,19 +130,25 @@ class _LoginPageState extends State<LoginPage> {
     final controller = context.read<AppController>();
     setState(() => busy = true);
     try {
-      if (!otpStep) {
+      if (!otpStep && !passwordStep) {
         final issued = await controller.requestUserOtp(phone.text, 'login');
+        final role = issued['role'] as String? ?? 'user';
+        final needsPassword = issued['requires_password'] == true || role == 'pdr';
         setState(() {
-          otpStep = true;
-          previewCode = issued['preview_code'] as String?;
-          loginRole = issued['role'] as String? ?? 'user';
+          loginRole = role;
+          if (needsPassword) {
+            passwordStep = true;
+            pdrName = issued['pdr_name'] as String?;
+          } else {
+            otpStep = true;
+            previewCode = issued['preview_code'] as String?;
+          }
         });
+      } else if (passwordStep) {
+        await controller.enterPdr(phone.text, password.text);
+        if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
       } else {
-        if (loginRole == 'pdr') {
-          await controller.verifyPdr(phone.text, code.text);
-        } else {
-          await controller.verifyUser(phone.text, code.text, 'login');
-        }
+        await controller.verifyUser(phone.text, code.text, 'login');
         if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
       }
     } on Exception {
@@ -150,6 +161,22 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final title = passwordStep
+        ? 'Mot de passe PDR'
+        : otpStep
+            ? 'Vérification OTP'
+            : 'Connexion';
+    final subtitle = passwordStep
+        ? 'Entrez le mot de passe configuré pour ${pdrName ?? 'ce point de retrait'}.'
+        : otpStep
+            ? 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.'
+            : 'Utilisez le numéro de téléphone de votre compte.';
+    final actionLabel = passwordStep
+        ? 'Se connecter'
+        : otpStep
+            ? 'Vérifier'
+            : 'Continuer';
+
     return Scaffold(
       appBar: AppBar(leading: const BackButton()),
       body: ListView(
@@ -157,22 +184,39 @@ class _LoginPageState extends State<LoginPage> {
         children: [
           const Center(child: FastCashMark(size: 168, stacked: true)),
           const SizedBox(height: 12),
-          Text(otpStep ? 'Vérification OTP' : 'Connexion', textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+          Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
           const SizedBox(height: 8),
-          Text(
-            otpStep ? 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.' : 'Utilisez le numéro de téléphone de votre compte.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.muted),
-          ),
+          Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
           const SizedBox(height: 24),
-          if (!otpStep) PhoneField(controller: phone) else OtpBoxes(controller: code, onChanged: (_) {}),
+          if (!otpStep && !passwordStep) PhoneField(controller: phone),
+          if (passwordStep)
+            TextField(
+              controller: password,
+              obscureText: !showPassword,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => runAction(context, () async {
+                await _next();
+                if (mounted) setState(() => busy = false);
+              }),
+              decoration: InputDecoration(
+                hintText: 'Mot de passe',
+                filled: true,
+                fillColor: AppColors.mist,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                suffixIcon: IconButton(
+                  onPressed: () => setState(() => showPassword = !showPassword),
+                  icon: Icon(showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                ),
+              ),
+            ),
+          if (otpStep) OtpBoxes(controller: code, onChanged: (_) {}),
           if (otpStep && previewCode != null) ...[
             const SizedBox(height: 12),
             Text('Passerelle SMS non branchée. Code de vérification : $previewCode', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.night, fontWeight: FontWeight.w700)),
           ],
           const SizedBox(height: 20),
           PrimaryButton(
-            label: otpStep ? 'Vérifier' : 'Recevoir le code',
+            label: actionLabel,
             icon: Icons.arrow_forward_rounded,
             busy: busy,
             onPressed: () => runAction(context, () async {

@@ -190,8 +190,15 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
     db.add(op)
     db.flush()
     verb = "un retrait" if kind == "withdrawal" else "un dépôt"
+    offer_seconds = max(5, min(120, int(float(_setting(db, "pdr_offer_seconds", "30")))))
     db.add(TimelineEvent(operation_id=op.id, status="pending", label="Demande envoyée", created_at=op.created_at))
-    notify("pdr", pdr.id, "Nouvelle demande", f"{user.name} demande {verb} de {amount:g} {currency}.", op.id)
+    notify(
+        "pdr",
+        pdr.id,
+        "Appel entrant",
+        f"{user.name} demande {verb} de {amount:g} {currency} · {number.phone}. Validez ou refusez sous {offer_seconds} s.",
+        op.id,
+    )
     notify("user", user.id, "Demande envoyée", f"Votre demande {op.reference} est en attente du point de retrait.", op.id)
     return present(db, op)
 
@@ -312,7 +319,10 @@ def lookup_token(db: Session, pdr_id: int, code: str) -> dict:
         raise HTTPException(status_code=404, detail="Jeton introuvable.")
     maybe_expire(db, op)
     if op.pdr_id != pdr_id:
-        raise HTTPException(status_code=403, detail="Ce jeton ne correspond pas à votre point de retrait.")
+        raise HTTPException(
+            status_code=403,
+            detail="Ce ticket ne peut être validé que chez le point de retrait qui a accepté la demande.",
+        )
     payload = present(db, op)
     payload["redeemable"] = op.type == "withdrawal" and op.status == "payment_confirmed" and op.token_status == "active"
     if op.token_status == "used" or op.status == "completed":
@@ -334,17 +344,18 @@ def redeem(db: Session, pdr_id: int, code: str) -> dict:
     op.token_status = "used"
     op.token_expires_at = None
     op.mm_status = "session_closed"
-    # Paiement confirmé reste dans la chronologie ; le scan clôture jusqu’à la note.
-    _touch(db, op, "cash_delivered", "Scan effectué")
-    notify("user", op.user_id, "Scan effectué", "Le scan a réussi. Donnez une note au point de retrait.", op.id)
+    done = "Retrait effectué" if op.type == "withdrawal" else "Dépôt effectué"
+    _touch(db, op, "completed", done)
+    notify("user", op.user_id, done, f"{done} au {op.pdr_name}. Vous pouvez noter le point de retrait.", op.id)
+    notify("pdr", op.pdr_id, done, f"{done} · {op.reference}.", op.id)
     return present(db, op)
 
 
 def rate(db: Session, user_id: int, operation_id: int, stars: int, comment: str) -> dict:
     op = get_operation(db, operation_id)
     _visible(op, "user", user_id)
-    allowed = (op.type == "withdrawal" and op.status == "cash_delivered") or (
-        op.type == "deposit" and op.status == "payment_confirmed"
+    allowed = (op.type == "withdrawal" and op.status in {"cash_delivered", "completed"}) or (
+        op.type == "deposit" and op.status in {"payment_confirmed", "completed"}
     )
     if not allowed:
         raise HTTPException(status_code=409, detail="L'évaluation sera disponible à la fin de l'opération.")
@@ -365,5 +376,8 @@ def rate(db: Session, user_id: int, operation_id: int, stars: int, comment: str)
     )
     op.rating_stars = stars
     op.rating_comment = comment.strip()
-    _touch(db, op, "completed", "Opération terminée")
+    if op.status != "completed":
+        _touch(db, op, "completed", "Opération terminée")
+    else:
+        op.updated_at = now_iso()
     return present(db, op)

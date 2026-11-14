@@ -34,7 +34,7 @@ export function Modal({ title, text, confirmLabel, onConfirm, onClose }) {
     <div className="modal-back" onClick={onClose} role="presentation">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" onClick={(event) => event.stopPropagation()}>
         <h3 id="modal-title">{title}</h3>
-        <p>{text}</p>
+        <p style={{ whiteSpace: 'pre-wrap' }}>{text}</p>
         <div className="modal-actions">
           <button type="button" className="ghost" onClick={onClose}>Annuler</button>
           <button type="button" className="primary" onClick={onConfirm}>{confirmLabel}</button>

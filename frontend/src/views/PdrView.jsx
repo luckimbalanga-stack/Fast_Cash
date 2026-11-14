@@ -17,6 +17,7 @@ function blank(point) {
     name: point?.name || '',
     managerName: point?.manager_name || '',
     phone: String(point?.phone || '').replace('+243', ''),
+    password: '',
     address: point?.address || '',
     commune: point?.commune || '',
     city: point?.city || 'Kinshasa',
@@ -40,7 +41,7 @@ export function PdrView() {
 }
 
 function PdrList() {
-  const { pdrs } = useAppState()
+  const { pdrs, revealedPdrPassword, revealedPdrName } = useAppState()
   const controller = useAppController()
   const [query, setQuery] = useState('')
   const needle = query.trim().toLowerCase()
@@ -92,15 +93,25 @@ function PdrList() {
           </div>
         </button>
       ))}
+      {revealedPdrPassword ? (
+        <Modal
+          title="Mot de passe du point"
+          text={`${revealedPdrName || 'Ce point'} — conservez ce mot de passe pour la connexion mobile. L’envoi SMS sera branché plus tard.\n\n${revealedPdrPassword}`}
+          confirmLabel="J’ai noté le mot de passe"
+          onClose={() => controller.clearRevealedPdrPassword()}
+          onConfirm={() => controller.clearRevealedPdrPassword()}
+        />
+      ) : null}
     </div>
   )
 }
 
 function PdrForm({ draft }) {
-  const { busy } = useAppState()
+  const { busy, revealedPdrPassword } = useAppState()
   const controller = useAppController()
   const [form, setForm] = useState(() => blank(draft))
   const [confirm, setConfirm] = useState(false)
+  const [resetConfirm, setResetConfirm] = useState(false)
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
 
   function toggleNetwork(key) {
@@ -116,6 +127,17 @@ function PdrForm({ draft }) {
       <label>Responsable<input value={form.managerName} onChange={(event) => set('managerName', event.target.value)} /></label>
       <label>Téléphone<input value={form.phone} inputMode="numeric" maxLength={9} onChange={(event) => set('phone', event.target.value.replace(/\D/g, '').slice(0, 9))} />
         <small>+243, 9 chiffres</small>
+      </label>
+      <label>
+        Mot de passe de connexion
+        <input
+          type="text"
+          value={form.password}
+          autoComplete="new-password"
+          onChange={(event) => set('password', event.target.value)}
+          placeholder={form.id ? 'Laisser vide pour ne pas changer' : 'Au moins 8 caractères'}
+        />
+        <small>{form.id ? 'Optionnel en modification. Ou utilisez « Réinitialiser » ci-dessous.' : 'Requis — le PDR s’en sert pour se connecter dans l’app mobile.'}</small>
       </label>
       <label>Adresse<input value={form.address} onChange={(event) => set('address', event.target.value)} /></label>
       <div className="split">
@@ -149,6 +171,11 @@ function PdrForm({ draft }) {
         <button type="button" className="ghost" onClick={() => controller.open('pdr')}>Retour</button>
         <button type="submit" className="primary" disabled={busy}>{busy ? 'Enregistrement…' : form.id ? 'Enregistrer' : 'Créer le point'}</button>
       </div>
+      {form.id ? (
+        <button type="button" className="ghost" disabled={busy} onClick={() => setResetConfirm(true)}>
+          Réinitialiser le mot de passe
+        </button>
+      ) : null}
       {form.id && draft?.status === 'active' ? (
         <button type="button" className="ghost danger-text" disabled={busy} onClick={() => setConfirm(true)}>Désactiver ce point</button>
       ) : null}
@@ -159,6 +186,27 @@ function PdrForm({ draft }) {
           confirmLabel="Désactiver"
           onClose={() => setConfirm(false)}
           onConfirm={() => { setConfirm(false); controller.deactivatePdr(form.id) }}
+        />
+      ) : null}
+      {resetConfirm ? (
+        <Modal
+          title="Réinitialiser le mot de passe ?"
+          text="Un nouveau mot de passe sera généré et affiché ici (envoi SMS à brancher plus tard)."
+          confirmLabel="Réinitialiser"
+          onClose={() => setResetConfirm(false)}
+          onConfirm={() => {
+            setResetConfirm(false)
+            controller.resetPdrPassword(form.id)
+          }}
+        />
+      ) : null}
+      {revealedPdrPassword ? (
+        <Modal
+          title="Nouveau mot de passe"
+          text={`Communiquez ce mot de passe au responsable du point :\n\n${revealedPdrPassword}`}
+          confirmLabel="J’ai noté le mot de passe"
+          onClose={() => controller.clearRevealedPdrPassword()}
+          onConfirm={() => controller.clearRevealedPdrPassword()}
         />
       ) : null}
     </form>

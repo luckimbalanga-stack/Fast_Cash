@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from services.pdr import services
-from services.pdr.views import AvailabilityWrite, LiquidityMove, PdrPatch, PdrWrite, RatingWrite
+from services.pdr.views import AvailabilityWrite, LiquidityMove, PdrPasswordReset, PdrPatch, PdrWrite, RatingWrite
 from shared.db import get_db
 from shared.utils import INTERNAL_KEY, require_roles
 
@@ -79,6 +79,18 @@ def update_pdr(pdr_id: int, body: PdrPatch, authorization: str | None = Header(d
 def deactivate(pdr_id: int, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     require_roles(authorization, "admin")
     return services.deactivate(db, pdr_id)
+
+
+@router.post("/pdr/{pdr_id}/reset-password")
+def reset_password(
+    pdr_id: int,
+    body: PdrPasswordReset | None = None,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_roles(authorization, "admin")
+    password = body.password if body else None
+    return services.reset_password(db, pdr_id, password)
 
 
 @router.post("/pdr/{pdr_id}/availability")

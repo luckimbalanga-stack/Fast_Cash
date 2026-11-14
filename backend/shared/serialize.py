@@ -67,6 +67,7 @@ def pdr_dict(pdr: Pdr, distance_m: float | None = None, available: bool | None =
         "rating_avg": round(pdr.rating_avg or 0, 1),
         "rating_count": pdr.rating_count or 0,
         "opening_hours": pdr.opening_hours,
+        "has_password": bool((pdr.password_hash or "").strip()),
         "created_at": pdr.created_at,
     }
     if distance_m is not None:

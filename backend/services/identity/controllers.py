@@ -4,7 +4,17 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from services.identity import services
-from services.identity.views import AdminEnter, OtpRequest, OtpVerify, PhoneChallenge, PhoneCreate, PhoneUpdate, PhoneVerify, StatusUpdate
+from services.identity.views import (
+    AdminEnter,
+    OtpRequest,
+    OtpVerify,
+    PdrEnter,
+    PhoneChallenge,
+    PhoneCreate,
+    PhoneUpdate,
+    PhoneVerify,
+    StatusUpdate,
+)
 from shared.db import get_db
 from shared.utils import require_roles
 
@@ -29,6 +39,11 @@ def request_pdr_otp(body: OtpRequest, db: Session = Depends(get_db)):
 @router.post("/auth/pdr/verify")
 def verify_pdr_otp(body: OtpVerify, db: Session = Depends(get_db)):
     return services.verify_pdr_otp(db, body.phone, body.code)
+
+
+@router.post("/auth/pdr/enter")
+def enter_pdr(body: PdrEnter, db: Session = Depends(get_db)):
+    return services.enter_pdr(db, body.phone, body.password)
 
 
 @router.post("/auth/admin/enter")

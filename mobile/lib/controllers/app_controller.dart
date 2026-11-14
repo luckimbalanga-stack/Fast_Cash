@@ -175,9 +175,26 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> enterPdr(String phone, String password) async {
+    final json = await api.send('POST', '/api/auth/pdr/enter', body: {
+      'phone': phone,
+      'password': password,
+    });
+    final map = json as Map<String, dynamic>;
+    token = map['token'] as String;
+    role = 'pdr';
+    pdr = PdrPoint.fromJson(map['pdr'] as Map<String, dynamic>);
+    await refreshQuiet();
+    await _persistSession();
+    _startSync();
+    notifyListeners();
+  }
+
   void _startSync() {
     _sync?.cancel();
-    _sync = Timer.periodic(const Duration(seconds: 4), (_) => refreshQuiet());
+    // PDR : sync plus rapide pour l’appel entrant.
+    final seconds = role == 'pdr' ? 2 : 4;
+    _sync = Timer.periodic(Duration(seconds: seconds), (_) => refreshQuiet());
   }
 
   Future<void> refreshQuiet() async {
@@ -231,6 +248,8 @@ class AppController extends ChangeNotifier {
   }
 
   int get searchRadiusM => settings.searchRadiusM;
+
+  int get pdrOfferSeconds => settings.pdrOfferSeconds.clamp(5, 120);
 
   /// Compte les PDR dans un rayon (info seule, sans lister les points).
   Future<({int total, int open})> scanZonePdrs({int? maxM}) async {

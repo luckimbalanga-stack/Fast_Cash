@@ -1,5 +1,7 @@
 """Règles métier du service PDR."""
 
+import secrets
+
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -7,7 +9,21 @@ from sqlalchemy.orm import Session
 from services.admin.services import settings_payload
 from shared.models import Pdr, PhoneNumber, Rating
 from shared.serialize import pdr_dict, rating_dict
-from shared.utils import NETWORKS, haversine_m, normalize_phone, now_iso, round_money
+from shared.utils import NETWORKS, hash_password, haversine_m, normalize_phone, now_iso, round_money
+
+
+def _generate_password(length: int = 10) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _validate_password(password: str) -> str:
+    cleaned = (password or "").strip()
+    if len(cleaned) < 8:
+        raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 8 caractères.")
+    if len(cleaned) > 80:
+        raise HTTPException(status_code=400, detail="Le mot de passe est trop long.")
+    return cleaned
 
 
 def _networks(values: list[str]) -> str:
@@ -137,6 +153,7 @@ def create_pdr(db: Session, data: dict) -> dict:
         raise HTTPException(status_code=400, detail="Ce code PDR existe déjà.")
     if data.get("status") not in {"active", "inactive"}:
         raise HTTPException(status_code=400, detail="Statut inconnu.")
+    password = _validate_password(data.get("password") or "")
     pdr = Pdr(
         code=code,
         name=data["name"].strip(),
@@ -158,11 +175,14 @@ def create_pdr(db: Session, data: dict) -> dict:
         opening_hours=data.get("opening_hours") or "07:00 - 20:00",
         rating_avg=5,
         rating_count=0,
+        password_hash=hash_password(password),
         created_at=now_iso(),
     )
     db.add(pdr)
     db.flush()
-    return pdr_dict(pdr)
+    payload = pdr_dict(pdr)
+    payload["password"] = password
+    return payload
 
 
 def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
@@ -192,7 +212,23 @@ def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
         pdr.is_open = data["is_open"]
     if data.get("accepts_deposits") is not None:
         pdr.accepts_deposits = data["accepts_deposits"]
+    if data.get("password"):
+        pdr.password_hash = hash_password(_validate_password(data["password"]))
     return pdr_dict(pdr)
+
+
+def reset_password(db: Session, pdr_id: int, password: str | None = None) -> dict:
+    pdr = db.get(Pdr, pdr_id)
+    if not pdr:
+        raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
+    plain = _validate_password(password) if password else _generate_password()
+    pdr.password_hash = hash_password(plain)
+    payload = pdr_dict(pdr)
+    # Affiché une seule fois dans l’admin ; plus tard envoi SMS.
+    payload["password"] = plain
+    payload["delivery"] = "admin_display"
+    payload["message"] = "Mot de passe réinitialisé. Communiquez-le au responsable du point (SMS à brancher plus tard)."
+    return payload
 
 
 def deactivate(db: Session, pdr_id: int) -> dict:

@@ -101,6 +101,17 @@ def _ensure_admin_password_column() -> None:
         connection.execute(text("ALTER TABLE admins ADD COLUMN password_hash VARCHAR(200) DEFAULT ''"))
 
 
+def _ensure_pdr_password_column() -> None:
+    inspector = inspect(engine)
+    if "pdrs" not in inspector.get_table_names():
+        return
+    names = {column["name"] for column in inspector.get_columns("pdrs")}
+    if "password_hash" in names:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE pdrs ADD COLUMN password_hash VARCHAR(200) DEFAULT ''"))
+
+
 def _ensure_otp_code_column_width() -> None:
     """Le hash SHA-256 fait 64 caractères ; l’ancien schéma VARCHAR(6) cassait Neon."""
     inspector = inspect(engine)
@@ -125,16 +136,19 @@ def init_database(seed: bool = False) -> None:
     print(f"Fast-Cash DB : {'sqlite' if IS_SQLITE else 'postgres'}", flush=True)
     Base.metadata.create_all(engine)
     _ensure_admin_password_column()
+    _ensure_pdr_password_column()
     _ensure_otp_code_column_width()
     if seed:
         from shared.seed import (
             ensure_app_update_settings,
             ensure_default_ratings,
             ensure_initial_admin_password,
+            ensure_seed_pdr_password,
             seed_if_empty,
         )
 
         seed_if_empty()
         ensure_initial_admin_password()
+        ensure_seed_pdr_password()
         ensure_default_ratings()
         ensure_app_update_settings()

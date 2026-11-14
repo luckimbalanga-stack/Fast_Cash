@@ -226,6 +226,10 @@ export class AppController {
         throw new Error('Vérifiez le numéro et les coordonnées.')
       }
       if (!input.networks.length) throw new Error('Sélectionnez au moins un réseau Mobile Money.')
+      const password = String(input.password || '').trim()
+      if (!input.id && password.length < 8) {
+        throw new Error('Définissez un mot de passe d’au moins 8 caractères pour le point de retrait.')
+      }
       const body = {
         name,
         manager_name: manager,
@@ -243,9 +247,13 @@ export class AppController {
         usd_declared: usd,
         cdf_declared: cdf,
       }
+      let createdPassword = null
       if (!input.id) {
-        await this.model.createPdr(this.token, body)
+        body.password = password
+        const created = await this.model.createPdr(this.token, body)
+        createdPassword = created?.password || password
       } else {
+        if (password.length >= 8) body.password = password
         await this.model.updatePdr(this.token, input.id, body)
         await this.model.setAvailability(this.token, input.id, {
           usd_declared: usd,
@@ -256,8 +264,30 @@ export class AppController {
         })
       }
       await this.refresh()
-      this.setState({ section: 'pdr', pdrDraft: null, notice: input.id ? 'Point mis à jour.' : 'Point créé.' })
+      this.setState({
+        section: 'pdr',
+        pdrDraft: null,
+        notice: input.id ? 'Point mis à jour.' : 'Point créé.',
+        revealedPdrPassword: createdPassword,
+      })
     })
+  }
+
+  async resetPdrPassword(id) {
+    return this.run(async () => {
+      const result = await this.model.resetPdrPassword(this.token, id, {})
+      await this.refresh()
+      this.setState({
+        notice: result.message || 'Mot de passe réinitialisé.',
+        revealedPdrPassword: result.password || null,
+        revealedPdrName: result.name || this.state.pdrDraft?.name || null,
+      })
+      return result
+    })
+  }
+
+  clearRevealedPdrPassword() {
+    this.setState({ revealedPdrPassword: null, revealedPdrName: null })
   }
 
   deactivatePdr(id) {
@@ -273,11 +303,12 @@ export class AppController {
     const minutes = Number(input.minutes)
     const rate = Number(String(input.rate).replace(/\s/g, '').replace(',', '.'))
     const searchRadius = Number(String(input.searchRadius).replace(/\s/g, '').replace(',', '.'))
+    const pdrOfferSeconds = Number(String(input.pdrOfferSeconds).replace(/\s/g, '').replace(',', '.'))
     const appVersion = String(input.appVersion || '').trim()
     const appMinVersion = String(input.appMinVersion || '').trim()
     const appDownloadUrl = String(input.appDownloadUrl || '').trim()
     const appUpdateMessage = String(input.appUpdateMessage || '').trim()
-    if (!Number.isFinite(fee) || !Number.isFinite(minutes) || !Number.isFinite(rate) || !Number.isFinite(searchRadius)) {
+    if (!Number.isFinite(fee) || !Number.isFinite(minutes) || !Number.isFinite(rate) || !Number.isFinite(searchRadius) || !Number.isFinite(pdrOfferSeconds)) {
       this.setState({ error: 'Vérifiez les valeurs numériques.' })
       return Promise.resolve()
     }
@@ -291,6 +322,7 @@ export class AppController {
         token_minutes: minutes,
         usd_cdf_rate: rate,
         search_radius_m: Math.round(searchRadius),
+        pdr_offer_seconds: Math.round(pdrOfferSeconds),
         app_version: appVersion,
         app_min_version: appMinVersion,
         app_download_url: appDownloadUrl,

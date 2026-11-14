@@ -88,9 +88,20 @@ def request_otp(db: Session, phone_raw: str, purpose: str, name: str | None = No
     if pdr:
         if pdr.status != "active":
             raise HTTPException(status_code=403, detail="Ce point de retrait est désactivé.")
-        payload = _issue_otp(db, phone, "pdr")
-        payload["role"] = "pdr"
-        return payload
+        if not (pdr.password_hash or "").strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Aucun mot de passe configuré pour ce point. Contactez l’administration.",
+            )
+        return {
+            "phone": phone,
+            "purpose": "pdr",
+            "role": "pdr",
+            "requires_password": True,
+            "pdr_name": pdr.name,
+            "channel": "password",
+            "message": "Saisissez le mot de passe du point de retrait.",
+        }
     user = _user_by_login_phone(db, phone)
     if not user:
         raise HTTPException(status_code=404, detail="Aucun compte pour ce numéro. Créez un compte.")
@@ -151,23 +162,43 @@ def verify_otp(db: Session, phone_raw: str, code: str, purpose: str, name: str |
 
 
 def request_pdr_otp(db: Session, phone_raw: str) -> dict:
+    """Conservé pour compatibilité : la connexion PDR utilise désormais le mot de passe."""
     phone = normalize_phone(phone_raw)
     pdr = db.query(Pdr).filter(Pdr.phone == phone).one_or_none()
     if not pdr:
         raise HTTPException(status_code=404, detail="Aucun point de retrait pour ce numéro.")
     if pdr.status != "active":
         raise HTTPException(status_code=403, detail="Ce point de retrait est désactivé.")
-    payload = _issue_otp(db, phone, "pdr")
-    payload["pdr_name"] = pdr.name
-    return payload
+    if not (pdr.password_hash or "").strip():
+        raise HTTPException(
+            status_code=403,
+            detail="Aucun mot de passe configuré pour ce point. Contactez l’administration.",
+        )
+    return {
+        "phone": phone,
+        "purpose": "pdr",
+        "role": "pdr",
+        "requires_password": True,
+        "pdr_name": pdr.name,
+        "channel": "password",
+        "message": "Saisissez le mot de passe du point de retrait.",
+    }
 
 
 def verify_pdr_otp(db: Session, phone_raw: str, code: str) -> dict:
+    raise HTTPException(
+        status_code=400,
+        detail="La connexion PDR se fait désormais avec le mot de passe du point de retrait.",
+    )
+
+
+def enter_pdr(db: Session, phone_raw: str, password: str) -> dict:
     phone = normalize_phone(phone_raw)
-    _consume_otp(db, phone, "pdr", code)
     pdr = db.query(Pdr).filter(Pdr.phone == phone).one_or_none()
     if not pdr or pdr.status != "active":
         raise HTTPException(status_code=403, detail="Connexion PDR impossible.")
+    if not (pdr.password_hash or "").strip() or not verify_password(password, pdr.password_hash):
+        raise HTTPException(status_code=401, detail="Numéro ou mot de passe incorrect.")
     return {"token": f"pdr:{pdr.id}", "pdr": pdr_dict(pdr)}
 
 

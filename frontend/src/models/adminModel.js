@@ -18,6 +18,7 @@ export function createAdminModel() {
     updatePdr: (token, id, body) => request(`/api/pdr/${id}`, { method: 'PATCH', token, body }),
     setAvailability: (token, id, body) => request(`/api/pdr/${id}/availability`, { method: 'POST', token, body }),
     deactivatePdr: (token, id) => request(`/api/pdr/${id}/deactivate`, { method: 'POST', token, body: {} }),
+    resetPdrPassword: (token, id, body = {}) => request(`/api/pdr/${id}/reset-password`, { method: 'POST', token, body }),
     saveSettings: (token, body) => request('/api/settings', { method: 'PUT', token, body }),
     createMember: (token, body) => request('/api/admin/admins', { method: 'POST', token, body }),
     updateMember: (token, id, body) => request(`/api/admin/admins/${id}`, { method: 'PATCH', token, body }),
