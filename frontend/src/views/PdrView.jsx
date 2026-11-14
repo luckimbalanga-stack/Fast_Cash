@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppController, useAppState } from '../controllers/context'
 import { exportExcel } from '../models/excel'
 import { formatMoney, formatPhone } from '../models/format'
-import { Modal, SearchField, StatusChip } from './ui'
+import { Icon, Modal, SearchField, StatusChip } from './ui'
 
 const networks = [
   ['orange', 'Orange Money'],
@@ -17,7 +17,7 @@ function blank(point) {
     name: point?.name || '',
     managerName: point?.manager_name || '',
     phone: String(point?.phone || '').replace('+243', ''),
-    password: '',
+    password: point?.password || '',
     address: point?.address || '',
     commune: point?.commune || '',
     city: point?.city || 'Kinshasa',
@@ -112,7 +112,14 @@ function PdrForm({ draft }) {
   const [form, setForm] = useState(() => blank(draft))
   const [confirm, setConfirm] = useState(false)
   const [resetConfirm, setResetConfirm] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+
+  useEffect(() => {
+    if (revealedPdrPassword) {
+      setForm((current) => ({ ...current, password: revealedPdrPassword }))
+    }
+  }, [revealedPdrPassword])
 
   function toggleNetwork(key) {
     setForm((current) => ({
@@ -130,14 +137,28 @@ function PdrForm({ draft }) {
       </label>
       <label>
         Mot de passe de connexion
-        <input
-          type="text"
-          value={form.password}
-          autoComplete="new-password"
-          onChange={(event) => set('password', event.target.value)}
-          placeholder={form.id ? 'Laisser vide pour ne pas changer' : 'Au moins 8 caractères'}
-        />
-        <small>{form.id ? 'Optionnel en modification. Ou utilisez « Réinitialiser » ci-dessous.' : 'Requis — le PDR s’en sert pour se connecter dans l’app mobile.'}</small>
+        <div className="password-field">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={form.password}
+            autoComplete="new-password"
+            onChange={(event) => set('password', event.target.value)}
+            placeholder={form.id ? (form.password ? '' : 'Réinitialisez pour afficher / définir') : 'Au moins 8 caractères'}
+          />
+          <button
+            type="button"
+            className="password-toggle"
+            aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+            onClick={() => setShowPassword((current) => !current)}
+          >
+            <Icon name={showPassword ? 'eyeOff' : 'eye'} />
+          </button>
+        </div>
+        <small>
+          {form.id
+            ? 'Masqué par défaut — cliquez sur l’œil pour le lire. « Réinitialiser » génère un nouveau mot de passe.'
+            : 'Requis — le PDR s’en sert pour se connecter dans l’app mobile.'}
+        </small>
       </label>
       <label>Adresse<input value={form.address} onChange={(event) => set('address', event.target.value)} /></label>
       <div className="split">

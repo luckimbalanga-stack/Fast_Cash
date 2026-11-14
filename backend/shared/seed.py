@@ -38,8 +38,11 @@ def ensure_seed_pdr_password() -> None:
     db = SessionLocal()
     try:
         pdr = db.query(Pdr).filter(Pdr.code == "FC-PDR-001").one_or_none()
-        if pdr and not (pdr.password_hash or "").strip():
+        if not pdr:
+            return
+        if not (pdr.password_hash or "").strip():
             pdr.password_hash = hash_password(INITIAL_PDR_PASSWORD)
+            pdr.password_plain = INITIAL_PDR_PASSWORD
             db.commit()
     except Exception:
         db.rollback()
@@ -131,6 +134,7 @@ def _seed(db) -> None:
             rating_avg=5,
             rating_count=0,
             password_hash=hash_password(INITIAL_PDR_PASSWORD),
+            password_plain=INITIAL_PDR_PASSWORD,
             created_at=now,
         )
     )

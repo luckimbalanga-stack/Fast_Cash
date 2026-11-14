@@ -106,10 +106,11 @@ def _ensure_pdr_password_column() -> None:
     if "pdrs" not in inspector.get_table_names():
         return
     names = {column["name"] for column in inspector.get_columns("pdrs")}
-    if "password_hash" in names:
-        return
     with engine.begin() as connection:
-        connection.execute(text("ALTER TABLE pdrs ADD COLUMN password_hash VARCHAR(200) DEFAULT ''"))
+        if "password_hash" not in names:
+            connection.execute(text("ALTER TABLE pdrs ADD COLUMN password_hash VARCHAR(200) DEFAULT ''"))
+        if "password_plain" not in names:
+            connection.execute(text("ALTER TABLE pdrs ADD COLUMN password_plain VARCHAR(120) DEFAULT ''"))
 
 
 def _ensure_otp_code_column_width() -> None:

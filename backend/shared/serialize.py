@@ -39,7 +39,13 @@ def network_list(raw: str) -> list[str]:
     return [item for item in raw.split(",") if item]
 
 
-def pdr_dict(pdr: Pdr, distance_m: float | None = None, available: bool | None = None) -> dict:
+def pdr_dict(
+    pdr: Pdr,
+    distance_m: float | None = None,
+    available: bool | None = None,
+    *,
+    include_password: bool = False,
+) -> dict:
     usd_available = round_money(pdr.usd_declared - pdr.usd_reserved, "USD")
     cdf_available = round_money(pdr.cdf_declared - pdr.cdf_reserved, "CDF")
     payload = {
@@ -70,6 +76,9 @@ def pdr_dict(pdr: Pdr, distance_m: float | None = None, available: bool | None =
         "has_password": bool((pdr.password_hash or "").strip()),
         "created_at": pdr.created_at,
     }
+    if include_password:
+        # Réservé à l’admin web — jamais exposé à la recherche / mobile.
+        payload["password"] = (getattr(pdr, "password_plain", None) or "").strip()
     if distance_m is not None:
         payload["distance_m"] = round(distance_m)
         payload["eta_min"] = eta_minutes(distance_m)

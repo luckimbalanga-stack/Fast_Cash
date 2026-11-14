@@ -69,6 +69,8 @@ def list_pdrs(
     is_open: bool | None = None,
     network: str | None = None,
     currency: str | None = None,
+    *,
+    include_password: bool = False,
 ) -> list[dict]:
     query = db.query(Pdr)
     if commune:
@@ -86,15 +88,15 @@ def list_pdrs(
             continue
         if currency == "CDF" and pdr.cdf_declared - pdr.cdf_reserved <= 0:
             continue
-        payload.append(pdr_dict(pdr))
+        payload.append(pdr_dict(pdr, include_password=include_password))
     return payload
 
 
-def get_pdr(db: Session, pdr_id: int) -> dict:
+def get_pdr(db: Session, pdr_id: int, *, include_password: bool = False) -> dict:
     pdr = db.get(Pdr, pdr_id)
     if not pdr:
         raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
-    return pdr_dict(pdr)
+    return pdr_dict(pdr, include_password=include_password)
 
 
 def search(
@@ -176,13 +178,12 @@ def create_pdr(db: Session, data: dict) -> dict:
         rating_avg=5,
         rating_count=0,
         password_hash=hash_password(password),
+        password_plain=password,
         created_at=now_iso(),
     )
     db.add(pdr)
     db.flush()
-    payload = pdr_dict(pdr)
-    payload["password"] = password
-    return payload
+    return pdr_dict(pdr, include_password=True)
 
 
 def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
@@ -213,8 +214,10 @@ def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
     if data.get("accepts_deposits") is not None:
         pdr.accepts_deposits = data["accepts_deposits"]
     if data.get("password"):
-        pdr.password_hash = hash_password(_validate_password(data["password"]))
-    return pdr_dict(pdr)
+        plain = _validate_password(data["password"])
+        pdr.password_hash = hash_password(plain)
+        pdr.password_plain = plain
+    return pdr_dict(pdr, include_password=True)
 
 
 def reset_password(db: Session, pdr_id: int, password: str | None = None) -> dict:
@@ -223,9 +226,8 @@ def reset_password(db: Session, pdr_id: int, password: str | None = None) -> dic
         raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
     plain = _validate_password(password) if password else _generate_password()
     pdr.password_hash = hash_password(plain)
-    payload = pdr_dict(pdr)
-    # Affiché une seule fois dans l’admin ; plus tard envoi SMS.
-    payload["password"] = plain
+    pdr.password_plain = plain
+    payload = pdr_dict(pdr, include_password=True)
     payload["delivery"] = "admin_display"
     payload["message"] = "Mot de passe réinitialisé. Communiquez-le au responsable du point (SMS à brancher plus tard)."
     return payload

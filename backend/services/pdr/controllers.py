@@ -1,12 +1,20 @@
 """Contrôleur HTTP du service PDR."""
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from services.pdr import services
 from services.pdr.views import AvailabilityWrite, LiquidityMove, PdrPasswordReset, PdrPatch, PdrWrite, RatingWrite
 from shared.db import get_db
-from shared.utils import INTERNAL_KEY, require_roles
+from shared.utils import INTERNAL_KEY, parse_bearer, require_roles
+
+
+def _admin_wants_password(authorization: str | None) -> bool:
+    try:
+        role, _ = parse_bearer(authorization)
+        return role == "admin"
+    except HTTPException:
+        return False
 
 router = APIRouter()
 
@@ -33,9 +41,18 @@ def list_pdrs(
     is_open: bool | None = None,
     network: str | None = None,
     currency: str | None = None,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    return services.list_pdrs(db, commune, status, is_open, network, currency)
+    return services.list_pdrs(
+        db,
+        commune,
+        status,
+        is_open,
+        network,
+        currency,
+        include_password=_admin_wants_password(authorization),
+    )
 
 
 @router.get("/pdr/search")
@@ -59,8 +76,12 @@ def ratings(pdr_id: int | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/pdr/{pdr_id}")
-def get_pdr(pdr_id: int, db: Session = Depends(get_db)):
-    return services.get_pdr(db, pdr_id)
+def get_pdr(
+    pdr_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    return services.get_pdr(db, pdr_id, include_password=_admin_wants_password(authorization))
 
 
 @router.post("/pdr")

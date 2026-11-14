@@ -214,7 +214,7 @@ class PdrHomePage extends StatelessWidget {
           child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.check_circle_outline, color: AppColors.brand), title: const Text('Demandes terminées'), subtitle: Text(completed == 0 ? 'Aucune opération clôturée' : '$completed opération${completed > 1 ? 's' : ''} clôturée${completed > 1 ? 's' : ''}'), trailing: const Icon(Icons.chevron_right)),
         ),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrScanPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.qr_code_scanner, color: AppColors.brand), title: Text('Vérifier un jeton'), subtitle: Text('Uniquement pour les demandes que vous avez acceptées'), trailing: Icon(Icons.chevron_right))),
-        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Déclarer USD, CDF et les dépôts'), trailing: Icon(Icons.chevron_right))),
+        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Solde disponible USD et CDF'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RatingsPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.star_outline, color: AppColors.brand), title: Text('Évaluations reçues'), trailing: Icon(Icons.chevron_right))),
       ],
     );
@@ -697,26 +697,8 @@ class _ScanCorners extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class LiquidityPage extends StatefulWidget {
+class LiquidityPage extends StatelessWidget {
   const LiquidityPage({super.key});
-
-  @override
-  State<LiquidityPage> createState() => _LiquidityPageState();
-}
-
-class _LiquidityPageState extends State<LiquidityPage> {
-  late final usd = TextEditingController(text: context.read<AppController>().pdr?.usdDeclared.toString() ?? '0');
-  late final cdf = TextEditingController(text: context.read<AppController>().pdr?.cdfDeclared.toStringAsFixed(0) ?? '0');
-  late bool deposits = context.read<AppController>().pdr?.acceptsDeposits ?? true;
-  late bool open = context.read<AppController>().pdr?.isOpen ?? true;
-  late Set<String> networks = {...?context.read<AppController>().pdr?.networks};
-
-  @override
-  void dispose() {
-    usd.dispose();
-    cdf.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -726,45 +708,31 @@ class _LiquidityPageState extends State<LiquidityPage> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          if (pdr != null) ...[
-            _money('Déclarées', formatMoney(pdr.usdDeclared, 'USD'), formatMoney(pdr.cdfDeclared, 'CDF')),
-            _money('Réservées', formatMoney(pdr.usdReserved, 'USD'), formatMoney(pdr.cdfReserved, 'CDF')),
-            _money('Disponibles', formatMoney(pdr.usdAvailable, 'USD'), formatMoney(pdr.cdfAvailable, 'CDF')),
-          ],
-          const SizedBox(height: 12),
-          TextField(controller: usd, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'USD déclarés')),
-          TextField(controller: cdf, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'CDF déclarés')),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Accepter les dépôts'), value: deposits, onChanged: (value) => setState(() => deposits = value)),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Point ouvert'), value: open, onChanged: (value) => setState(() => open = value)),
-          const Text('Réseaux acceptés', style: TextStyle(fontWeight: FontWeight.w700)),
-          Wrap(spacing: 8, children: [
-            for (final entry in const {'orange': 'Orange Money', 'airtel': 'Airtel Money', 'mpesa': 'M-Pesa', 'afrimoney': 'AfriMoney'}.entries)
-              FilterChip(
-                label: Text(entry.value),
-                selected: networks.contains(entry.key),
-                onSelected: (selected) => setState(() => selected ? networks.add(entry.key) : networks.remove(entry.key)),
-              ),
-          ]),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: 'Enregistrer',
-            onPressed: () => runAction(context, () => context.read<AppController>().updateAvailability({
-                  'usd_declared': double.parse(usd.text.replaceAll(' ', '')),
-                  'cdf_declared': double.parse(cdf.text.replaceAll(' ', '')),
-                  'accepts_deposits': deposits,
-                  'is_open': open,
-                  'networks': networks.toList(),
-                })),
+          const Text(
+            'Solde disponible sur votre point de retrait.',
+            style: TextStyle(color: AppColors.muted, height: 1.35),
           ),
+          const SizedBox(height: 16),
+          if (pdr == null)
+            const SoftCard(child: Text('Point de retrait introuvable.'))
+          else
+            SoftCard(
+              color: AppColors.mintSoft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Disponibles', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted)),
+                  const SizedBox(height: 10),
+                  Text(formatMoney(pdr.usdAvailable, 'USD'), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  const SizedBox(height: 6),
+                  Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.night)),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
-
-  Widget _money(String title, String usd, String cdf) => SoftCard(
-        padding: const EdgeInsets.all(12),
-        child: Row(children: [Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700))), Text('$usd\n$cdf', textAlign: TextAlign.right)]),
-      );
 }
 
 class PdrHistoryPage extends StatefulWidget {

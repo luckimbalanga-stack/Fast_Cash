@@ -65,6 +65,7 @@ class Pdr(Base):
     rating_count: Mapped[int] = mapped_column(Integer, default=0)
     opening_hours: Mapped[str] = mapped_column(String(40), default="07:00 - 20:00")
     password_hash: Mapped[str] = mapped_column(String(200), default="")
+    password_plain: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[str] = mapped_column(String(40))
 
 

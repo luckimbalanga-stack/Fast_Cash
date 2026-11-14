@@ -277,10 +277,13 @@ export class AppController {
     return this.run(async () => {
       const result = await this.model.resetPdrPassword(this.token, id, {})
       await this.refresh()
+      const nextPassword = result.password || null
+      const draft = this.state.pdrDraft
       this.setState({
         notice: result.message || 'Mot de passe réinitialisé.',
-        revealedPdrPassword: result.password || null,
-        revealedPdrName: result.name || this.state.pdrDraft?.name || null,
+        revealedPdrPassword: nextPassword,
+        revealedPdrName: result.name || draft?.name || null,
+        pdrDraft: draft && nextPassword ? { ...draft, password: nextPassword } : draft,
       })
       return result
     })

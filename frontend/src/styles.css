@@ -64,6 +64,29 @@ input, select {
 input:focus, select:focus { outline: 2px solid rgba(255, 106, 0, 0.22); border-color: #ffb27a; }
 small { font-weight: 500; color: #64748b; }
 
+.password-field {
+  position: relative;
+  display: grid;
+}
+.password-field input { padding-right: 44px; }
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #64748b;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.password-toggle:hover { color: #ff6a00; background: rgba(255, 106, 0, 0.08); }
+
 .primary, .ghost, .text-button {
   border-radius: 999px;
   border: 0;
