@@ -11,15 +11,14 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
-      # À renseigner dans le dashboard Render (valeur = DATABASE_URL Neon, pooled).
+      # Dashboard Render: renseigner DATABASE_URL (Neon pooled).
       - key: DATABASE_URL
         sync: false
 
+  # Site statique: pas de plan / healthCheck (CDN uniquement).
   - type: web
     name: fast-cash-web
     runtime: static
-    plan: free
-    region: frankfurt
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
