@@ -165,14 +165,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> verifyPdr(String phone, String code) async {
     final json = await api.send('POST', '/api/auth/pdr/verify', body: {'phone': phone, 'code': code, 'purpose': 'pdr'});
-    final map = json as Map<String, dynamic>;
-    token = map['token'] as String;
-    role = 'pdr';
-    pdr = PdrPoint.fromJson(map['pdr'] as Map<String, dynamic>);
-    await refreshQuiet();
-    await _persistSession();
-    _startSync();
-    notifyListeners();
+    await applyPdrSession(json as Map<String, dynamic>);
   }
 
   /// Valide le mot de passe PDR et déclenche l’OTP (simulation console si SMS off).
@@ -182,6 +175,16 @@ class AppController extends ChangeNotifier {
       'password': password,
     });
     return json as Map<String, dynamic>;
+  }
+
+  Future<void> applyPdrSession(Map<String, dynamic> map) async {
+    token = map['token'] as String;
+    role = 'pdr';
+    pdr = PdrPoint.fromJson(map['pdr'] as Map<String, dynamic>);
+    await refreshQuiet();
+    await _persistSession();
+    _startSync();
+    notifyListeners();
   }
 
   void _startSync() {

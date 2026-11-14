@@ -146,12 +146,19 @@ class _LoginPageState extends State<LoginPage> {
         });
       } else if (passwordStep) {
         final issued = await controller.enterPdr(phone.text, password.text);
+        // Ancienne API : token immédiat. Nouvelle API : OTP simulé à afficher.
+        if (issued['token'] is String && issued['pdr'] is Map) {
+          await controller.applyPdrSession(issued);
+          if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
+          return;
+        }
+        final preview = issued['preview_code']?.toString();
         setState(() {
           passwordStep = false;
           otpStep = true;
           loginRole = 'pdr';
           pdrName = issued['pdr_name'] as String? ?? pdrName;
-          previewCode = issued['preview_code'] as String?;
+          previewCode = (preview != null && preview.isNotEmpty) ? preview : null;
           code.clear();
         });
       } else if (loginRole == 'pdr') {
@@ -222,9 +229,35 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
           if (otpStep) OtpBoxes(controller: code, onChanged: (_) {}),
-          if (otpStep && previewCode != null) ...[
-            const SizedBox(height: 12),
-            Text('Passerelle SMS non branchée. Code de vérification : $previewCode', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.night, fontWeight: FontWeight.w700)),
+          if (otpStep) ...[
+            const SizedBox(height: 14),
+            SoftCard(
+              color: AppColors.waitingSoft,
+              child: Column(
+                children: [
+                  const Text(
+                    'Simulation OTP',
+                    style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.waiting),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    previewCode == null
+                        ? 'Passerelle SMS non branchée. Le code devrait s’afficher ici après le mot de passe. Redéployez l’API si le code n’apparaît pas.'
+                        : 'Passerelle SMS non branchée. Utilisez ce code de test :',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.muted, height: 1.35),
+                  ),
+                  if (previewCode != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      previewCode!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 4, color: AppColors.night),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
           const SizedBox(height: 20),
           PrimaryButton(
