@@ -45,3 +45,6 @@ Thumbs.db
 *.log
 .neon
 node_modules/
+
+# Ancien dépôt git imbriqué (ne pas versionner)
+backend/.git.bak_nested_unused/
