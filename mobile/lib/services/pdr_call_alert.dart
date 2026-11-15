@@ -1,80 +1,117 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/app_nav.dart';
 import '../models/models.dart';
 import '../views/pdr/incoming_call_page.dart';
 
-/// Alerte système type appel entrant (plein écran + son/vibration).
+/// Alerte système type appel entrant (plein écran au-dessus des autres apps).
 class PdrCallAlert {
   PdrCallAlert._();
 
-  static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  static const _channel = MethodChannel('fast_cash/incoming_call');
   static bool _ready = false;
-  static int? _activeCallId;
-  static void Function(int operationId)? onOpenCall;
-
-  static const _channelId = 'pdr_incoming_call';
-  static const _channelName = 'Appels demandes Fast-Cash';
-  static const _notifId = 71001;
+  static bool _permsWarm = false;
+  static int? _presentedId;
+  static Map<String, dynamic>? _seedById;
+  static void Function(int operationId, Map<String, dynamic>? seed)? onOpenCall;
 
   static Future<void> init() async {
     if (_ready) return;
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
-    await _plugin.initialize(
-      const InitializationSettings(android: android, iOS: ios),
-      onDidReceiveNotificationResponse: _onResponse,
-    );
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.createNotificationChannel(
-      const AndroidNotificationChannel(
-        _channelId,
-        _channelName,
-        description: 'Affiche les demandes retrait/dépôt en plein écran comme un appel.',
-        importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
-        showBadge: true,
-      ),
-    );
-    _ready = true;
-
-    final launch = await _plugin.getNotificationAppLaunchDetails();
-    if (launch?.didNotificationLaunchApp == true) {
-      final payload = launch!.notificationResponse?.payload;
-      final id = _parseId(payload);
-      if (id != null) {
-        // Laisse le bootstrap restaurer la session avant navigation.
-        Future<void>.delayed(const Duration(milliseconds: 800), () => openCallScreen(id));
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onIncomingCallIntent') {
+        final args = Map<String, dynamic>.from(call.arguments as Map? ?? {});
+        _openFromNative(args);
       }
-    }
+    });
+    try {
+      final pending = await _channel.invokeMethod<dynamic>('consumePendingCall');
+      if (pending is Map) {
+        _openFromNative(Map<String, dynamic>.from(pending));
+      }
+    } catch (_) {}
+    _ready = true;
+    // Permissions en arrière-plan : ne jamais bloquer l’apparition de l’appel.
+    unawaited(ensurePermissions());
   }
 
   static Future<void> ensurePermissions() async {
-    if (!Platform.isAndroid) return;
-    await Permission.notification.request();
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.requestNotificationsPermission();
-    await androidPlugin?.requestFullScreenIntentPermission();
-  }
-
-  static void _onResponse(NotificationResponse response) {
-    final id = _parseId(response.payload);
-    if (id != null) openCallScreen(id);
-  }
-
-  static int? _parseId(String? payload) {
-    if (payload == null || payload.isEmpty) return null;
+    if (!Platform.isAndroid || _permsWarm) return;
+    _permsWarm = true;
     try {
-      final map = jsonDecode(payload) as Map<String, dynamic>;
-      return map['operation_id'] as int?;
-    } catch (_) {
-      return int.tryParse(payload);
+      await Permission.notification.request();
+    } catch (_) {}
+    try {
+      final canFsi = await _channel.invokeMethod<bool>('canUseFullScreenIntent');
+      if (canFsi == false) {
+        await _channel.invokeMethod<void>('requestFullScreenIntentPermission');
+      }
+    } catch (_) {}
+    try {
+      await Permission.systemAlertWindow.request();
+    } catch (_) {}
+  }
+
+  static Map<String, dynamic> seedFromOperation(CashOperation operation, int waitSeconds) {
+    return {
+      'id': operation.id,
+      'reference': operation.reference,
+      'type': operation.type,
+      'user_id': operation.userId,
+      'user_name': operation.userName,
+      'pdr_id': operation.pdrId,
+      'pdr_name': operation.pdrName,
+      'pdr_address': operation.pdrAddress,
+      'pdr_commune': operation.pdrCommune,
+      'pdr_lat': operation.pdrLat,
+      'pdr_lng': operation.pdrLng,
+      'pdr_hours': operation.pdrHours,
+      'pdr_phone': operation.pdrPhone,
+      'phone': operation.phone,
+      'network': operation.network,
+      'network_label': operation.networkLabel,
+      'amount': operation.amount,
+      'currency': operation.currency,
+      'fees': operation.fees,
+      'total': operation.total,
+      'status': operation.status,
+      'token_code': operation.tokenCode,
+      'token_status': operation.tokenStatus,
+      'token_expires_at': operation.tokenExpiresAt,
+      'rating_stars': operation.ratingStars,
+      'rating_comment': operation.ratingComment,
+      'created_at': operation.createdAt,
+      'timeline': const <dynamic>[],
+      'wait': waitSeconds,
+    };
+  }
+
+  /// Sonnerie native immédiate (appelable aussi depuis l’isolate watchdog).
+  static Future<void> ringNative({
+    required int operationId,
+    required String title,
+    required String body,
+    required String callerName,
+    required int waitSeconds,
+    required String payloadJson,
+  }) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('ringNow', {
+        'operationId': operationId,
+        'title': title,
+        'body': body,
+        'callerName': callerName,
+        'waitSeconds': waitSeconds,
+        'payloadJson': payloadJson,
+      });
+    } catch (e) {
+      debugLog('ringNative failed: $e');
     }
   }
 
@@ -83,63 +120,77 @@ class PdrCallAlert {
     required int waitSeconds,
   }) async {
     if (!Platform.isAndroid && !Platform.isIOS) return;
-    await init();
-    await ensurePermissions();
-    if (_activeCallId == operation.id) return;
-    _activeCallId = operation.id;
+    if (!_ready) unawaited(init());
 
+    final seed = seedFromOperation(operation, waitSeconds);
+    _seedById = seed;
     final typeLabel = operation.isWithdrawal ? 'Retrait' : 'Dépôt';
+    final amount = operation.amount.toStringAsFixed(operation.currency == 'CDF' ? 0 : 2);
     final title = 'Appel entrant Fast-Cash';
-    final body = '$typeLabel · ${operation.userName} · ${operation.amount.toStringAsFixed(operation.currency == 'CDF' ? 0 : 2)} ${operation.currency}';
-    final payload = jsonEncode({'operation_id': operation.id, 'wait': waitSeconds});
+    final body = '$typeLabel · ${operation.userName} · $amount ${operation.currency}';
+    final payloadJson = jsonEncode(seed);
 
-    final androidDetails = AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: 'Demandes PDR en plein écran',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.call,
-      fullScreenIntent: true,
-      visibility: NotificationVisibility.public,
-      ongoing: true,
-      autoCancel: false,
-      playSound: true,
-      enableVibration: true,
-      ticker: 'Demande Fast-Cash',
-      actions: <AndroidNotificationAction>[
-        const AndroidNotificationAction('refuse', 'Refuser', showsUserInterface: true, cancelNotification: true),
-        const AndroidNotificationAction('accept', 'Valider', showsUserInterface: true, cancelNotification: true),
-      ],
-    );
+    // 1) Écran Flutter tout de suite (si app déjà active).
+    openCallScreen(operation.id, seed: seed);
 
-    await _plugin.show(
-      _notifId,
-      title,
-      body,
-      NotificationDetails(android: androidDetails, iOS: const DarwinNotificationDetails(presentSound: true, presentAlert: true)),
-      payload: payload,
-    );
-
-    // Si l’app est déjà active, ouvre aussi l’écran Flutter immédiatement.
-    openCallScreen(operation.id);
+    // 2) Notif FSI + bring-to-front natif (sans await permissions).
+    unawaited(ringNative(
+      operationId: operation.id,
+      title: title,
+      body: body,
+      callerName: operation.userName,
+      waitSeconds: waitSeconds,
+      payloadJson: payloadJson,
+    ));
   }
 
   static Future<void> dismiss() async {
-    _activeCallId = null;
     _presentedId = null;
-    await _plugin.cancel(_notifId);
+    _seedById = null;
+    if (Platform.isAndroid) {
+      try {
+        await _channel.invokeMethod<void>('dismissIncomingCall');
+      } catch (_) {}
+    }
   }
 
-  static int? _presentedId;
+  static void _openFromNative(Map<String, dynamic> args) {
+    final id = args['operationId'];
+    final operationId = id is int ? id : int.tryParse('$id');
+    if (operationId == null) return;
+    Map<String, dynamic>? seed;
+    final raw = args['payloadJson'];
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) seed = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    if (seed != null) _seedById = seed;
+    openCallScreen(operationId, seed: seed);
+  }
 
-  static void openCallScreen(int operationId) {
-    onOpenCall?.call(operationId);
+  static void openCallScreen(int operationId, {Map<String, dynamic>? seed, int attempt = 0}) {
+    onOpenCall?.call(operationId, seed ?? _seedById);
     final nav = appNavigatorKey.currentState;
-    if (nav == null) return;
+    if (nav == null) {
+      if (attempt >= 30) return;
+      Future<void>.delayed(Duration(milliseconds: attempt < 5 ? 80 : 200), () {
+        openCallScreen(operationId, seed: seed ?? _seedById, attempt: attempt + 1);
+      });
+      return;
+    }
     if (_presentedId == operationId) return;
     _presentedId = operationId;
-    nav.pushNamed(IncomingCallPage.routeName, arguments: operationId).whenComplete(() {
+    nav
+        .pushNamed(
+          IncomingCallPage.routeName,
+          arguments: {
+            'operationId': operationId,
+            'seed': seed ?? _seedById,
+          },
+        )
+        .whenComplete(() {
       if (_presentedId == operationId) _presentedId = null;
     });
   }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -43,9 +45,6 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final totalLabel = total == null
-        ? null
-        : (total! <= 1 ? '$total PDR trouvé' : '$total PDR trouvés');
     final openLabel = open == null
         ? null
         : (open! <= 1 ? '$open PDR ouvert' : '$open PDR ouverts');
@@ -79,7 +78,7 @@ class _SearchPageState extends State<SearchPage> {
             ],
           ),
         ),
-        if (totalLabel != null && openLabel != null) ...[
+        if (openLabel != null) ...[
           const SizedBox(height: 14),
           SoftCard(
             color: AppColors.brandSoft,
@@ -89,9 +88,9 @@ class _SearchPageState extends State<SearchPage> {
                 const Text('Résultat du dernier scan', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.night)),
                 const SizedBox(height: 8),
                 Text(
-                  total == 0
-                      ? 'Aucun PDR trouvé dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
-                      : '$totalLabel, dont $openLabel.',
+                  (open ?? 0) == 0
+                      ? 'Aucun PDR ouvert dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
+                      : '$openLabel (du plus proche au plus éloigné).',
                   style: const TextStyle(color: AppColors.night, height: 1.4),
                 ),
               ],
@@ -433,7 +432,12 @@ class ProfilePage extends StatelessWidget {
           child: Text('Votre code PIN Mobile Money n’est demandé qu’au moment d’autoriser une opération. Fast-Cash ne l’enregistre pas.'),
         ),
         const SizedBox(height: 16),
-        PrimaryButton(label: 'Se déconnecter', onPressed: () => context.read<AppController>().logout()),
+        PrimaryButton(
+          label: 'Se déconnecter',
+          onPressed: () {
+            unawaited(context.read<AppController>().logout());
+          },
+        ),
       ],
     );
   }

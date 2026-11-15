@@ -50,15 +50,44 @@ def _available_amount(pdr: Pdr, currency: str) -> float:
     return pdr.cdf_declared - pdr.cdf_reserved
 
 
+def _has_available_liquidity(pdr: Pdr) -> bool:
+    """True s’il reste au moins une devise avec un disponible > 0."""
+    return _available_amount(pdr, "USD") > 1e-6 or _available_amount(pdr, "CDF") > 1e-6
+
+
+def _force_closed_without_liquidity(db: Session, pdr: Pdr) -> bool:
+    """Ferme le PDR si disponible = 0. Retourne True si fermeture effectuée."""
+    if _has_available_liquidity(pdr) or not pdr.is_open:
+        return False
+    pdr.is_open = False
+    from services.operations.services import cancel_pending_for_pdr
+
+    cancel_pending_for_pdr(db, pdr.id, "Liquidités disponibles à 0 — point fermé automatiquement")
+    return True
+
+
+def _require_liquidity_to_toggle(pdr: Pdr, want_open: bool) -> None:
+    """Ouverture/fermeture manuelle autorisée seulement s’il reste du disponible."""
+    if _has_available_liquidity(pdr):
+        return
+    # Sans liquidité : statut verrouillé à fermé.
+    if want_open:
+        raise HTTPException(
+            status_code=400,
+            detail="Statut verrouillé à fermé : liquidités disponibles à 0. Déclarez un solde pour pouvoir ouvrir ou fermer.",
+        )
+    # want_open=False sans liquidité : déjà (ou sera) forcé fermé — pas d’erreur.
+
+
 def is_match(pdr: Pdr, kind: str, currency: str, amount: float, network: str | None) -> bool:
+    """Éligibilité recherche : actif, ouvert, réseau ; pas de filtre liquidité."""
     if pdr.status != "active" or not pdr.is_open:
         return False
     if not _supports(pdr, network):
         return False
     if kind == "deposit":
         return bool(pdr.accepts_deposits)
-    if _available_amount(pdr, currency) + 1e-6 < amount:
-        return False
+    # Retrait : on ne filtre plus sur les liquidités déclarées/réservées.
     return True
 
 
@@ -83,10 +112,6 @@ def list_pdrs(
     payload = []
     for pdr in rows:
         if network and network not in pdr.networks.split(","):
-            continue
-        if currency == "USD" and pdr.usd_declared - pdr.usd_reserved <= 0:
-            continue
-        if currency == "CDF" and pdr.cdf_declared - pdr.cdf_reserved <= 0:
             continue
         payload.append(pdr_dict(pdr, include_password=include_password))
     return payload
@@ -141,8 +166,9 @@ def search(
         distance = haversine_m(lat, lng, pdr.lat, pdr.lng)
         if distance <= cap and is_match(pdr, kind, currency, amount, network):
             nearby.append((distance, pdr))
+    # Priorité : plus proche d’abord, puis mieux noté (fermés exclus plus haut).
+    nearby.sort(key=lambda item: (item[0], -float(item[1].rating_avg or 0)))
     results = [pdr_dict(pdr, distance_m=distance, available=True) for distance, pdr in nearby]
-    results.sort(key=lambda item: (-float(item["rating_avg"]), float(item["distance_m"])))
     return {
         "origin": {"lat": lat, "lng": lng, "simulated": simulated},
         "radius_m": cap,
@@ -166,6 +192,12 @@ def create_pdr(db: Session, data: dict) -> dict:
     if data.get("status") not in {"active", "inactive"}:
         raise HTTPException(status_code=400, detail="Statut inconnu.")
     password = _validate_password(data.get("password") or "")
+    usd_declared = max(0, round_money(data.get("usd_declared") or 0, "USD"))
+    cdf_declared = max(0, round_money(data.get("cdf_declared") or 0, "CDF"))
+    want_open = bool(data.get("is_open", True))
+    # Pas de disponible → forcément fermé à la création.
+    if want_open and usd_declared <= 1e-6 and cdf_declared <= 1e-6:
+        want_open = False
     pdr = Pdr(
         code=code,
         name=data["name"].strip(),
@@ -176,14 +208,14 @@ def create_pdr(db: Session, data: dict) -> dict:
         city=(data.get("city") or "Kinshasa").strip(),
         lat=data["lat"],
         lng=data["lng"],
-        usd_declared=max(0, round_money(data.get("usd_declared") or 0, "USD")),
-        cdf_declared=max(0, round_money(data.get("cdf_declared") or 0, "CDF")),
+        usd_declared=usd_declared,
+        cdf_declared=cdf_declared,
         usd_reserved=0,
         cdf_reserved=0,
         accepts_deposits=bool(data.get("accepts_deposits", True)),
         networks=_networks(data.get("networks") or []),
         status=data.get("status") or "active",
-        is_open=bool(data.get("is_open", True)),
+        is_open=want_open,
         opening_hours=data.get("opening_hours") or "07:00 - 20:00",
         rating_avg=5,
         rating_count=0,
@@ -220,13 +252,19 @@ def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
             raise HTTPException(status_code=400, detail="Statut inconnu.")
         pdr.status = data["status"]
     if data.get("is_open") is not None:
-        pdr.is_open = data["is_open"]
+        want_open = bool(data["is_open"])
+        _require_liquidity_to_toggle(pdr, want_open)
+        if _has_available_liquidity(pdr):
+            pdr.is_open = want_open
+        else:
+            pdr.is_open = False
     if data.get("accepts_deposits") is not None:
         pdr.accepts_deposits = data["accepts_deposits"]
     if data.get("password"):
         plain = _validate_password(data["password"])
         pdr.password_hash = hash_password(plain)
         pdr.password_plain = plain
+    _force_closed_without_liquidity(db, pdr)
     return pdr_dict(pdr, include_password=True)
 
 
@@ -274,12 +312,17 @@ def update_availability(db: Session, pdr_id: int, data: dict) -> dict:
     if data.get("networks") is not None:
         pdr.networks = _networks(data["networks"])
     if data.get("is_open") is not None:
+        want_open = bool(data["is_open"])
+        _require_liquidity_to_toggle(pdr, want_open)
         was_open = bool(pdr.is_open)
-        pdr.is_open = data["is_open"]
+        # Sans disponible : verrouillé fermé. Avec disponible : ouvrir/fermer librement.
+        pdr.is_open = want_open if _has_available_liquidity(pdr) else False
         if was_open and not pdr.is_open:
             from services.operations.services import cancel_pending_for_pdr
 
             cancel_pending_for_pdr(db, pdr_id, "Point de retrait fermé / déconnecté")
+    # Disponible à 0 → fermeture auto et verrouillage (ex. après baisse de déclaration).
+    _force_closed_without_liquidity(db, pdr)
     return pdr_dict(pdr)
 
 
@@ -309,6 +352,8 @@ def _move(db: Session, pdr_id: int, currency: str, amount: float, action: str) -
         setattr(pdr, declared_attr, round_money(declared + amount, currency))
     else:
         raise HTTPException(status_code=400, detail="Mouvement de liquidité inconnu.")
+    # Si le disponible tombe à 0 (réserve / consommation), fermer automatiquement.
+    _force_closed_without_liquidity(db, pdr)
     return pdr_dict(pdr)
 
 

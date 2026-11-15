@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api.dart';
+import '../core/app_nav.dart';
 import '../core/version.dart';
 import '../models/models.dart';
 import '../services/pdr_call_alert.dart';
@@ -240,12 +241,17 @@ class AppController extends ChangeNotifier {
   void handleWatchdogOffer(Map<String, dynamic> data) {
     if (role != 'pdr' || pdr == null || !pdr!.isOpen) return;
     final raw = data['raw'];
-    if (raw is Map<String, dynamic>) {
-      _upsertOperation(CashOperation.fromJson(raw));
-      notifyListeners();
-    } else {
-      unawaited(refreshLight());
+    if (raw is Map) {
+      try {
+        final operation = CashOperation.fromJson(Map<String, dynamic>.from(raw));
+        _upsertOperation(operation);
+        notifyListeners();
+        final wait = (data['wait'] is int) ? data['wait'] as int : pdrOfferSeconds;
+        unawaited(PdrCallAlert.showIncomingCall(operation: operation, waitSeconds: wait.clamp(5, 120)));
+        return;
+      } catch (_) {}
     }
+    unawaited(refreshLight());
     _maybeRingIncoming();
   }
 
@@ -287,18 +293,29 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  /// Injecte une demande reçue via notification / intent natif (hors sync).
+  void upsertIncomingSeed(CashOperation operation) {
+    _upsertOperation(operation);
+    notifyListeners();
+  }
+
+  bool get _isLoggedIn => token != null && role != 'guest';
+
   /// Sync léger : opérations + notifications uniquement.
   Future<void> refreshLight() async {
-    if (token == null || _refreshing) return;
+    if (!_isLoggedIn || _refreshing) return;
     _refreshing = true;
     _lightOnly = true;
     try {
       final previousOps = _opsSignature(operations);
       final previousNotes = _notesSignature(notifications);
+      final auth = token;
+      if (auth == null) return;
       final results = await Future.wait([
-        api.send('GET', '/api/operations', token: token),
-        api.send('GET', '/api/notifications', token: token),
+        api.send('GET', '/api/operations', token: auth),
+        api.send('GET', '/api/notifications', token: auth),
       ]);
+      if (!_isLoggedIn) return;
       operations = (results[0] as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
       notifications = (results[1] as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
       final changed = previousOps != _opsSignature(operations) || previousNotes != _notesSignature(notifications);
@@ -315,40 +332,48 @@ class AppController extends ChangeNotifier {
 
   /// Sync complet : settings + profil/PDR + ops + notifs.
   Future<void> refreshFull() async {
-    if (token == null) return;
+    if (!_isLoggedIn) return;
     if (_refreshing && !_lightOnly) return;
     var wait = 0;
     while (_refreshing && _lightOnly && wait < 40) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       wait += 1;
     }
-    if (_refreshing) return;
+    if (_refreshing || !_isLoggedIn) return;
     _refreshing = true;
     try {
       final previousOps = _opsSignature(operations);
       final previousNotes = _notesSignature(notifications);
       final previousPdrOpen = pdr?.isOpen;
       final previousUserId = user?.id;
+      final auth = token;
+      if (auth == null) return;
       try {
         final settingsJson = await api.send('GET', '/api/settings');
+        if (!_isLoggedIn) return;
         settings = AppSettings.fromJson(settingsJson as Map<String, dynamic>);
         pendingUpdate = _resolveUpdate(settings, installedVersion);
       } catch (_) {}
+      if (!_isLoggedIn) return;
       if (role == 'user') {
-        final me = await api.send('GET', '/api/users/me', token: token);
+        final me = await api.send('GET', '/api/users/me', token: auth);
+        if (!_isLoggedIn) return;
         _applyUser(me as Map<String, dynamic>);
       } else if (role == 'pdr' && pdr != null) {
+        final pdrId = pdr!.id;
         final results = await Future.wait([
-          api.send('GET', '/api/pdr/${pdr!.id}', token: token),
-          api.send('GET', '/api/pdr/ratings?pdr_id=${pdr!.id}', token: token),
+          api.send('GET', '/api/pdr/$pdrId', token: auth),
+          api.send('GET', '/api/pdr/ratings?pdr_id=$pdrId', token: auth),
         ]);
+        if (!_isLoggedIn) return;
         pdr = PdrPoint.fromJson(results[0] as Map<String, dynamic>);
         ratings = (results[1] as List).map((item) => RatingItem.fromJson(item as Map<String, dynamic>)).toList();
       }
       final opsNotes = await Future.wait([
-        api.send('GET', '/api/operations', token: token),
-        api.send('GET', '/api/notifications', token: token),
+        api.send('GET', '/api/operations', token: auth),
+        api.send('GET', '/api/notifications', token: auth),
       ]);
+      if (!_isLoggedIn) return;
       operations = (opsNotes[0] as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
       notifications = (opsNotes[1] as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
       _lastFullRefresh = DateTime.now();
@@ -402,7 +427,7 @@ class AppController extends ChangeNotifier {
 
   int get pdrOfferSeconds => settings.pdrOfferSeconds.clamp(5, 120);
 
-  /// Compte les PDR dans un rayon (info seule, sans lister les points).
+  /// Compte les PDR ouverts dans un rayon (fermés ignorés, sans filtre liquidité).
   Future<({int total, int open})> scanZonePdrs({int? maxM}) async {
     final radius = maxM ?? searchRadiusM;
     const kinLat = -4.3038;
@@ -422,15 +447,21 @@ class AppController extends ChangeNotifier {
       }
     } catch (_) {}
     await loadDirectory();
-    var total = 0;
-    var open = 0;
+    // Plus proche d’abord parmi les ouverts uniquement.
+    final openInRadius = <({PdrPoint point, double meters})>[];
     for (final point in directory) {
+      if (!point.isOpen) continue;
       final meters = Geolocator.distanceBetween(lat, lng, point.lat, point.lng);
       if (meters > radius) continue;
-      total += 1;
-      if (point.isOpen) open += 1;
+      openInRadius.add((point: point, meters: meters));
     }
-    return (total: total, open: open);
+    openInRadius.sort((a, b) {
+      final byDistance = a.meters.compareTo(b.meters);
+      if (byDistance != 0) return byDistance;
+      return b.point.ratingAvg.compareTo(a.point.ratingAvg);
+    });
+    final open = openInRadius.length;
+    return (total: open, open: open);
   }
 
   Future<CashOperation> createOperation({required int pdrId, required String phone, required double amount, required String currency, required String type}) async {
@@ -535,10 +566,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Ne jamais await stopService() avant le clear : il peut bloquer et
+    // empêcher notifyListeners() (impossible de se déconnecter).
     _sync?.cancel();
-    _syncPaused = false;
-    await PdrWatchdog.stop();
-    await PdrCallAlert.dismiss();
+    _sync = null;
+    _syncPaused = true;
     token = null;
     role = 'guest';
     user = null;
@@ -547,8 +579,26 @@ class AppController extends ChangeNotifier {
     notifications = [];
     ratings = [];
     selectedPhoneId = null;
-    await _persistSession();
     notifyListeners();
+    try {
+      appNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    } catch (_) {}
+    try {
+      await Future.wait([
+        _persistSession(),
+        PdrWatchdog.clearSession(),
+      ]).timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    unawaited(_shutdownBackgroundServices());
+  }
+
+  Future<void> _shutdownBackgroundServices() async {
+    try {
+      await PdrWatchdog.stop().timeout(const Duration(seconds: 4));
+    } catch (_) {}
+    try {
+      await PdrCallAlert.dismiss().timeout(const Duration(seconds: 2));
+    } catch (_) {}
   }
 
   @override

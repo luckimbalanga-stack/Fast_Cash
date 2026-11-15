@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -31,7 +33,8 @@ class PdrWatchdog {
       ),
       iosNotificationOptions: const IOSNotificationOptions(showNotification: false, playSound: false),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(2500),
+        // Poll plus fréquent = détection plus rapide de la demande.
+        eventAction: ForegroundTaskEventAction.repeat(1200),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
@@ -89,13 +92,26 @@ class PdrWatchdog {
     );
   }
 
+  /// Efface les prefs de session immédiatement (sans attendre le stop service).
+  static Future<void> clearSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kOpen, false);
+      await prefs.remove(_kToken);
+      await prefs.remove(_kApi);
+      await prefs.remove(_kOffer);
+    } catch (_) {}
+  }
+
   static Future<void> stop() async {
+    await clearSession();
     if (!Platform.isAndroid) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kOpen, false);
-    if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.stopService();
-    }
+    try {
+      final running = await FlutterForegroundTask.isRunningService
+          .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      if (!running) return;
+      await FlutterForegroundTask.stopService().timeout(const Duration(seconds: 3));
+    } catch (_) {}
   }
 }
 
@@ -105,6 +121,10 @@ void pdrWatchdogCallback() {
 }
 
 class _PdrWatchHandler extends TaskHandler {
+  static const _channel = MethodChannel('fast_cash/incoming_call');
+  int? _lastRangId;
+  bool _polling = false;
+
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     // no-op
@@ -112,7 +132,9 @@ class _PdrWatchHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    _poll();
+    if (_polling) return;
+    _polling = true;
+    _poll().whenComplete(() => _polling = false);
   }
 
   @override
@@ -133,7 +155,8 @@ class _PdrWatchHandler extends TaskHandler {
         final req = await client.getUrl(uri);
         req.headers.set('Authorization', 'Bearer $token');
         req.headers.set('Content-Type', 'application/json');
-        final res = await req.close().timeout(const Duration(seconds: 12));
+        // Timeout court pour ne pas rater la fenêtre d’offre.
+        final res = await req.close().timeout(const Duration(seconds: 6));
         if (res.statusCode >= 400) return;
         final body = await res.transform(const Utf8Decoder()).join();
         final decoded = jsonDecode(body);
@@ -155,18 +178,56 @@ class _PdrWatchHandler extends TaskHandler {
             best = item;
           }
         }
-        if (best != null) {
-          FlutterForegroundTask.sendDataToMain({
-            'operation_id': best['id'],
-            'type': best['type'],
-            'user_name': best['user_name'],
-            'amount': best['amount'],
-            'currency': best['currency'],
-            'created_at': best['created_at'],
-            'wait': offer,
-            'raw': best,
-          });
+        if (best == null) {
+          _lastRangId = null;
+          return;
         }
+
+        final opId = best['id'];
+        final operationId = opId is int ? opId : int.tryParse('$opId');
+        if (operationId == null) return;
+
+        // Sonnerie native IMMÉDIATE depuis l’isolate (avant le round-trip UI).
+        if (_lastRangId != operationId) {
+          _lastRangId = operationId;
+          final wait = offer.clamp(5, 120);
+          final type = '${best['type']}' == 'withdrawal' ? 'Retrait' : 'Dépôt';
+          final name = '${best['user_name'] ?? 'Client'}';
+          final currency = '${best['currency'] ?? ''}';
+          final amountRaw = best['amount'];
+          final amount = amountRaw is num
+              ? amountRaw.toStringAsFixed(currency == 'CDF' ? 0 : 2)
+              : '$amountRaw';
+          final seed = Map<String, dynamic>.from(best)..['wait'] = wait;
+          final payloadJson = jsonEncode(seed);
+          try {
+            FlutterForegroundTask.wakeUpScreen();
+          } catch (_) {}
+          try {
+            await _channel.invokeMethod<void>('ringNow', {
+              'operationId': operationId,
+              'title': 'Appel entrant Fast-Cash',
+              'body': '$type · $name · $amount $currency',
+              'callerName': name,
+              'waitSeconds': wait,
+              'payloadJson': payloadJson,
+            });
+          } catch (_) {}
+          try {
+            FlutterForegroundTask.launchApp();
+          } catch (_) {}
+        }
+
+        FlutterForegroundTask.sendDataToMain({
+          'operation_id': best['id'],
+          'type': best['type'],
+          'user_name': best['user_name'],
+          'amount': best['amount'],
+          'currency': best['currency'],
+          'created_at': best['created_at'],
+          'wait': offer,
+          'raw': best,
+        });
       } finally {
         client.close(force: true);
       }

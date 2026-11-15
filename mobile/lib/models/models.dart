@@ -122,6 +122,9 @@ class PdrPoint {
   final int? etaMin;
   final bool? availableForRequest;
 
+  /// Au moins une devise avec un disponible > 0.
+  bool get hasAvailableLiquidity => usdAvailable > 0 || cdfAvailable > 0;
+
   factory PdrPoint.fromJson(Map<String, dynamic> json) => PdrPoint(
         id: json['id'] as int,
         code: json['code'] as String,

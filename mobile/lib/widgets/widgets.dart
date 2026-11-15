@@ -451,8 +451,8 @@ Future<void> runAction(BuildContext context, Future<void> Function() action) asy
 }
 
 Future<void> showZoneScanResult(BuildContext context, {required int total, required int open, int? radiusM}) {
-  final totalLabel = total <= 1 ? '$total PDR trouvé' : '$total PDR trouvés';
-  final openLabel = open <= 1 ? '$open PDR ouvert' : '$open PDR ouverts';
+  final openCount = open > 0 ? open : total;
+  final openLabel = openCount <= 1 ? '$openCount PDR ouvert' : '$openCount PDR ouverts';
   final radiusLabel = formatRadiusLabel(radiusM ?? 1000);
   return showDialog<void>(
     context: context,
@@ -460,9 +460,9 @@ Future<void> showZoneScanResult(BuildContext context, {required int total, requi
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: const Text('Scan de zone', style: TextStyle(fontWeight: FontWeight.w800)),
       content: Text(
-        total == 0
-            ? 'Aucun PDR trouvé dans un rayon de $radiusLabel autour de vous.'
-            : '$totalLabel, dont $openLabel.',
+        openCount == 0
+            ? 'Aucun PDR ouvert trouvé dans un rayon de $radiusLabel autour de vous.'
+            : '$openLabel dans un rayon de $radiusLabel (du plus proche au plus éloigné).',
         style: const TextStyle(color: AppColors.muted, height: 1.4),
       ),
       actions: [

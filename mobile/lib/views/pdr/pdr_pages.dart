@@ -85,13 +85,18 @@ class PdrHomePage extends StatelessWidget {
           const FastCashMark(size: 40, wordmark: true),
           const Spacer(),
           Tooltip(
-            message: pdr.isOpen ? 'Ouvert' : 'Fermé',
+            message: !pdr.hasAvailableLiquidity
+                ? 'Liquidités à 0 : statut verrouillé fermé'
+                : (pdr.isOpen ? 'Ouvert — touchez pour fermer' : 'Fermé — touchez pour ouvrir'),
             child: Switch(
-              value: pdr.isOpen,
+              value: pdr.hasAvailableLiquidity && pdr.isOpen,
               thumbColor: const WidgetStatePropertyAll(Colors.white),
               trackColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? AppColors.brand : AppColors.danger),
               trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
-              onChanged: (value) => runAction(context, () => controller.updateAvailability({'is_open': value})),
+              // Ouvrir/fermer seulement s’il reste du disponible.
+              onChanged: !pdr.hasAvailableLiquidity
+                  ? null
+                  : (value) => runAction(context, () => controller.updateAvailability({'is_open': value})),
             ),
           ),
           IconButton(
@@ -109,6 +114,8 @@ class PdrHomePage extends StatelessWidget {
               Text('PDR ${pdr.code}', style: const TextStyle(color: AppColors.muted)),
               const SizedBox(height: 4),
               Text(pdr.isOpen ? 'En service' : 'Indisponible', style: TextStyle(color: pdr.isOpen ? AppColors.mint : AppColors.danger, fontWeight: FontWeight.w700)),
+              if (!pdr.hasAvailableLiquidity)
+                const Text('Liquidités à 0 — statut verrouillé fermé', style: TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600)),
               Text('${pdr.address}, ${pdr.commune}', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
               Text('★ ${pdr.ratingAvg.toStringAsFixed(1)} · ${pdr.ratingCount} avis', style: const TextStyle(fontSize: 12)),
             ])),
@@ -182,7 +189,12 @@ class PdrProfilePage extends StatelessWidget {
           Text(pdr.isOpen ? 'Ouvert' : 'Fermé', style: TextStyle(color: pdr.isOpen ? AppColors.mint : AppColors.danger, fontWeight: FontWeight.w700)),
         ])),
         const SizedBox(height: 16),
-        PrimaryButton(label: 'Se déconnecter', onPressed: () => context.read<AppController>().logout()),
+        PrimaryButton(
+          label: 'Se déconnecter',
+          onPressed: () {
+            unawaited(context.read<AppController>().logout());
+          },
+        ),
       ],
     );
   }
@@ -658,6 +670,13 @@ class LiquidityPage extends StatelessWidget {
                   Text(formatMoney(pdr.usdAvailable, 'USD'), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
                   const SizedBox(height: 6),
                   Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  if (!pdr.hasAvailableLiquidity) ...[
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Disponible à 0 : statut verrouillé sur fermé. Vous pourrez ouvrir ou fermer le point seulement quand le disponible sera différent de 0.',
+                      style: TextStyle(color: AppColors.danger, height: 1.35),
+                    ),
+                  ],
                 ],
               ),
             ),

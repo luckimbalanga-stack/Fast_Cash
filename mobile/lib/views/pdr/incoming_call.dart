@@ -121,7 +121,7 @@ class _IncomingRequestCallState extends State<IncomingRequestCall> with SingleTi
           child: Column(
             children: [
               Text(
-                'Demande entrante',
+                op.isWithdrawal ? 'Appel entrant · Retrait' : 'Appel entrant · Dépôt',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.72),
                   fontWeight: FontWeight.w600,
@@ -158,9 +158,15 @@ class _IncomingRequestCallState extends State<IncomingRequestCall> with SingleTi
               ),
               const SizedBox(height: 6),
               Text(
-                '$typeLabel · ${formatMoney(op.amount, op.currency)}',
+                typeLabel,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.brand, fontSize: 20, fontWeight: FontWeight.w800),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                formatMoney(op.amount, op.currency),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.brand, fontSize: 34, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 18),
               Container(

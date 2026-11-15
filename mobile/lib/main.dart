@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import 'controllers/app_controller.dart';
 import 'core/app_nav.dart';
+import 'models/models.dart';
 import 'services/pdr_call_alert.dart';
 import 'services/pdr_watchdog.dart';
 import 'theme/app_theme.dart';
@@ -36,10 +37,14 @@ class FastCashApp extends StatelessWidget {
       create: (_) {
         final controller = AppController()..bootstrap();
         PdrWatchdog.onOfferFound = controller.handleWatchdogOffer;
-        PdrCallAlert.onOpenCall = (id) {
-          // Assure un refresh ops avant d’afficher si besoin.
+        PdrCallAlert.onOpenCall = (id, seed) {
+          if (seed != null) {
+            try {
+              controller.upsertIncomingSeed(CashOperation.fromJson(seed));
+            } catch (_) {}
+          }
           if (controller.operationById(id) == null) {
-            controller.refreshLight();
+            unawaited(controller.refreshLight());
           }
         };
         return controller;
@@ -53,12 +58,23 @@ class FastCashApp extends StatelessWidget {
         builder: (context, child) => WithForegroundTask(child: child ?? const SizedBox.shrink()),
         onGenerateRoute: (settings) {
           if (settings.name == IncomingCallPage.routeName) {
-            final id = settings.arguments;
-            if (id is int) {
+            final args = settings.arguments;
+            int? id;
+            Map<String, dynamic>? seed;
+            if (args is int) {
+              id = args;
+            } else if (args is Map) {
+              final rawId = args['operationId'];
+              id = rawId is int ? rawId : int.tryParse('$rawId');
+              final rawSeed = args['seed'];
+              if (rawSeed is Map) seed = Map<String, dynamic>.from(rawSeed);
+            }
+            if (id != null) {
+              final operationId = id;
               return MaterialPageRoute<void>(
                 settings: settings,
                 fullscreenDialog: true,
-                builder: (_) => IncomingCallPage(operationId: id),
+                builder: (_) => IncomingCallPage(operationId: operationId, seed: seed),
               );
             }
           }
