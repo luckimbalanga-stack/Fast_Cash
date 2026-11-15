@@ -57,7 +57,7 @@ class _IncomingRequestCallState extends State<IncomingRequestCall> with SingleTi
     _secondsLeft = _wait;
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat(reverse: true);
     _refreshCountdown();
-    _tick = Timer.periodic(const Duration(milliseconds: 200), (_) {
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _busy) return;
       _refreshCountdown();
     });

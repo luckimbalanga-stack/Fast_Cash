@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
@@ -68,9 +70,18 @@ class _PdrShellState extends State<PdrShell> {
                   operation: current,
                   waitSeconds: wait,
                   onExpired: () {
-                    if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
-                      Navigator.of(dialogContext, rootNavigator: true).pop();
-                    }
+                    // Clôture côté serveur pour sortir de la file d’attente, puis ferme l’appel.
+                    unawaited(() async {
+                      try {
+                        final current = liveController.operationById(operationId);
+                        if (current?.status == 'pending') {
+                          await liveController.postAction(operationId, 'cancel');
+                        }
+                      } catch (_) {}
+                      if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+                        Navigator.of(dialogContext, rootNavigator: true).pop();
+                      }
+                    }());
                   },
                   onAccept: () async {
                     try {
@@ -111,9 +122,11 @@ class _PdrShellState extends State<PdrShell> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = context.watch<AppController>();
-    final incoming = _liveIncoming(controller);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureIncomingCall(incoming));
+    final incomingId = context.select<AppController, int?>((c) => _liveIncoming(c)?.id);
+    final incoming = incomingId == null ? null : context.read<AppController>().operationById(incomingId);
+    if (incomingId != null && incomingId != _shownCallId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _ensureIncomingCall(incoming));
+    }
 
     final pages = [const PdrHomePage(), const PdrRequestsPage(), const PdrScanPage(), const PdrHistoryPage(), const PdrProfilePage()];
     return Scaffold(
@@ -343,19 +356,23 @@ class _RequestList extends StatelessWidget {
     final items = context.watch<AppController>().operations.where(match).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     if (items.isEmpty) return Center(child: Text(emptyLabel, style: const TextStyle(color: AppColors.muted)));
-    return ListView(
+    return ListView.builder(
       padding: const EdgeInsets.all(16),
-      children: items.map((operation) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: SoftCard(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PdrRequestPage(operationId: operation.id))),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [Expanded(child: Text(operation.userName, style: const TextStyle(fontWeight: FontWeight.w800))), StatusPill(status: operation.status, type: operation.type)]),
-            Text('${operation.isWithdrawal ? 'Retrait' : 'Dépôt'} · ${formatMoney(operation.amount, operation.currency)}'),
-            Text('${operation.reference} · ${formatDate(operation.createdAt)}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-          ]),
-        ),
-      )).toList(),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final operation = items[index];
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: SoftCard(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PdrRequestPage(operationId: operation.id))),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [Expanded(child: Text(operation.userName, style: const TextStyle(fontWeight: FontWeight.w800))), StatusPill(status: operation.status, type: operation.type)]),
+              Text('${operation.isWithdrawal ? 'Retrait' : 'Dépôt'} · ${formatMoney(operation.amount, operation.currency)}'),
+              Text('${operation.reference} · ${formatDate(operation.createdAt)}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+            ]),
+          ),
+        );
+      },
     );
   }
 }

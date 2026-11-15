@@ -38,10 +38,14 @@ const titles = {
 }
 
 export function ShellView() {
-  const state = useAppState()
+  const banner = useAppState((state) => state.banner)
+  const section = useAppState((state) => state.section)
+  const session = useAppState((state) => state.session)
+  const error = useAppState((state) => state.error)
+  const notice = useAppState((state) => state.notice)
   const controller = useAppController()
   const [menu, setMenu] = useState(false)
-  const current = state.section === 'pdr-form' ? 'pdr' : state.section
+  const current = section === 'pdr-form' ? 'pdr' : section
 
   function choose(section) {
     controller.open(section)
@@ -50,7 +54,7 @@ export function ShellView() {
 
   return (
     <div className="shell">
-      {state.banner ? <p className="banner">{state.banner}</p> : null}
+      {banner ? <p className="banner">{banner}</p> : null}
       <div className="frame">
         <aside className={menu ? 'side open' : 'side'}>
           <div className="brand">
@@ -70,29 +74,29 @@ export function ShellView() {
         <section className="content">
           <header className="top">
             <button type="button" className="icon menu-button" aria-label="Ouvrir le menu" onClick={() => setMenu(true)}>☰</button>
-            <span className="sr">{titles[state.section]}</span>
+            <span className="sr">{titles[section]}</span>
             <div className="top-actions">
               <button type="button" className="icon" aria-label="Actualiser" onClick={() => controller.reload()}><Icon name="refresh" /></button>
               <div className="account">
-                <span className="avatar">{initials(state.session.name)}</span>
+                <span className="avatar">{initials(session?.name)}</span>
                 <span>
-                  <b>{state.session.name}</b>
-                  <small>{roleLabel(state.session.role)}</small>
+                  <b>{session?.name}</b>
+                  <small>{roleLabel(session?.role)}</small>
                 </span>
               </div>
             </div>
           </header>
-          {state.error ? <p className="error bar">{state.error}</p> : null}
-          {state.notice ? <p className="notice">{state.notice}</p> : null}
+          {error ? <p className="error bar">{error}</p> : null}
+          {notice ? <p className="notice">{notice}</p> : null}
           <div className="page">
-            {state.section !== 'dashboard' ? <header className="page-title"><h2>{titles[state.section]}</h2></header> : null}
-            {state.section === 'dashboard' ? <DashboardView /> : null}
-            {state.section === 'users' ? <UsersView /> : null}
-            {state.section === 'pdr' || state.section === 'pdr-form' ? <PdrView /> : null}
-            {state.section === 'operations' ? <OperationsView /> : null}
-            {state.section === 'reports' ? <ReportsView /> : null}
-            {state.section === 'team' ? <TeamView /> : null}
-            {state.section === 'settings' ? <SettingsView /> : null}
+            {section !== 'dashboard' ? <header className="page-title"><h2>{titles[section]}</h2></header> : null}
+            {section === 'dashboard' ? <DashboardView /> : null}
+            {section === 'users' ? <UsersView /> : null}
+            {section === 'pdr' || section === 'pdr-form' ? <PdrView /> : null}
+            {section === 'operations' ? <OperationsView /> : null}
+            {section === 'reports' ? <ReportsView /> : null}
+            {section === 'team' ? <TeamView /> : null}
+            {section === 'settings' ? <SettingsView /> : null}
           </div>
         </section>
       </div>

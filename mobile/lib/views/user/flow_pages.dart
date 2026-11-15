@@ -408,6 +408,7 @@ class _DispatchPageState extends State<DispatchPage> {
   AppController? _controller;
   int _cursor = 0;
   int? _operationId;
+  int? _handledSkipId;
   bool _advancing = false;
   bool _started = false;
   bool _exhausted = false;
@@ -415,6 +416,7 @@ class _DispatchPageState extends State<DispatchPage> {
   bool _leaving = false;
   String? _error;
   Timer? _timeout;
+  Timer? _fastPoll;
 
   int get _waitSeconds => (_controller?.settings.pdrOfferSeconds ?? 30).clamp(5, 120);
 
@@ -434,15 +436,25 @@ class _DispatchPageState extends State<DispatchPage> {
     final next = context.read<AppController>();
     if (!identical(next, _controller)) {
       _controller?.removeListener(_onOperations);
+      _fastPoll?.cancel();
+      _controller?.resumeSync();
       _controller = next;
+      _controller!.pauseSync();
       _controller!.addListener(_onOperations);
+      // Poll léger ops/notifs uniquement pendant le chaînage.
+      _fastPoll = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (!mounted || _exhausted || _leaving) return;
+        unawaited(_controller?.refreshLight() ?? Future.value());
+      });
     }
   }
 
   @override
   void dispose() {
     _timeout?.cancel();
+    _fastPoll?.cancel();
     _controller?.removeListener(_onOperations);
+    _controller?.resumeSync();
     super.dispose();
   }
 
@@ -457,7 +469,7 @@ class _DispatchPageState extends State<DispatchPage> {
     _timeout = Timer(Duration(seconds: wait), () {
       if (!mounted || _operationId != operationId || _advancing || _exhausted) return;
       final operation = _controller?.operationById(operationId);
-      if (operation == null || operation.status != 'pending') return;
+      if (operation != null && operation.status != 'pending') return;
       _skipCurrent(cancel: true);
     });
   }
@@ -466,18 +478,26 @@ class _DispatchPageState extends State<DispatchPage> {
     if (_leaving || !mounted) return;
     _leaving = true;
     _clearTimeout();
+    _fastPoll?.cancel();
+    _controller?.resumeSync();
     Future<void>.delayed(delay, () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => page));
     });
   }
 
+  bool _shouldAdvancePast(CashOperation operation) {
+    return operation.status == 'refused' || operation.status == 'cancelled';
+  }
+
   void _onOperations() {
     if (!mounted || _operationId == null || _advancing || _exhausted || _leaving) return;
     final operation = _controller?.operationById(_operationId!);
     if (operation == null) return;
-    if (operation.status == 'refused') {
+    if (_shouldAdvancePast(operation)) {
+      if (_handledSkipId == operation.id) return;
       _clearTimeout();
+      _handledSkipId = operation.id;
       _cursor += 1;
       _offerNext();
       return;
@@ -507,13 +527,17 @@ class _DispatchPageState extends State<DispatchPage> {
     if (_advancing) return;
     _clearTimeout();
     final currentId = _operationId;
+    if (currentId != null) _handledSkipId = currentId;
+    // Annulation en arrière-plan : on passe immédiatement au PDR suivant.
     if (cancel && currentId != null) {
-      try {
-        final operation = _controller?.operationById(currentId);
-        if (operation?.status == 'pending') {
-          await _controller!.postAction(currentId, 'cancel');
-        }
-      } catch (_) {}
+      unawaited(() async {
+        try {
+          final operation = _controller?.operationById(currentId);
+          if (operation == null || operation.status == 'pending') {
+            await _controller?.postAction(currentId, 'cancel');
+          }
+        } catch (_) {}
+      }());
     }
     if (!mounted) return;
     _cursor += 1;

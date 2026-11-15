@@ -114,8 +114,6 @@ def search(
         raise HTTPException(status_code=400, detail="Type d'opération inconnu.")
     if currency not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="Devise inconnue.")
-    rows = db.query(Pdr).filter(Pdr.status == "active", Pdr.is_open.is_(True)).all()
-    measured = [(haversine_m(lat, lng, pdr.lat, pdr.lng), pdr) for pdr in rows]
     # Le rayon admin (Paramètres web) fait foi ; max_m client ne peut que le resserrer.
     configured = max(100, min(20000, int(settings_payload(db)["search_radius_m"])))
     if max_m is not None:
@@ -126,11 +124,23 @@ def search(
         cap = min(configured, client_cap)
     else:
         cap = configured
-    nearby = [
-        (distance, pdr)
-        for distance, pdr in measured
-        if distance <= cap and is_match(pdr, kind, currency, amount, network)
-    ]
+    # Préfiltre bounding-box (~111 km / degré) avant haversine exact.
+    pad_deg = max(0.02, (cap / 111_000.0) * 1.25)
+    rows = (
+        db.query(Pdr)
+        .filter(
+            Pdr.status == "active",
+            Pdr.is_open.is_(True),
+            Pdr.lat.between(lat - pad_deg, lat + pad_deg),
+            Pdr.lng.between(lng - pad_deg, lng + pad_deg),
+        )
+        .all()
+    )
+    nearby = []
+    for pdr in rows:
+        distance = haversine_m(lat, lng, pdr.lat, pdr.lng)
+        if distance <= cap and is_match(pdr, kind, currency, amount, network):
+            nearby.append((distance, pdr))
     results = [pdr_dict(pdr, distance_m=distance, available=True) for distance, pdr in nearby]
     results.sort(key=lambda item: (-float(item["rating_avg"]), float(item["distance_m"])))
     return {
@@ -239,6 +249,9 @@ def deactivate(db: Session, pdr_id: int) -> dict:
         raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
     pdr.status = "inactive"
     pdr.is_open = False
+    from services.operations.services import cancel_pending_for_pdr
+
+    cancel_pending_for_pdr(db, pdr_id, "Point de retrait désactivé")
     return pdr_dict(pdr)
 
 
@@ -261,7 +274,12 @@ def update_availability(db: Session, pdr_id: int, data: dict) -> dict:
     if data.get("networks") is not None:
         pdr.networks = _networks(data["networks"])
     if data.get("is_open") is not None:
+        was_open = bool(pdr.is_open)
         pdr.is_open = data["is_open"]
+        if was_open and not pdr.is_open:
+            from services.operations.services import cancel_pending_for_pdr
+
+            cancel_pending_for_pdr(db, pdr_id, "Point de retrait fermé / déconnecté")
     return pdr_dict(pdr)
 
 

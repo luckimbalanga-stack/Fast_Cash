@@ -220,65 +220,92 @@ class _HistoryPageState extends State<HistoryPage> {
       if (days == 0) return date.year == now.year && date.month == now.month && date.day == now.day;
       return now.difference(date).inDays <= days;
     }).toList();
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      children: [
-        const Text('Historique', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
-        const SizedBox(height: 10),
-        Wrap(spacing: 8, children: [
-          ChoiceChip(label: const Text('Tout'), selected: type == 'all', onSelected: (_) => setState(() => type = 'all')),
-          ChoiceChip(label: const Text('Retraits'), selected: type == 'withdrawal', onSelected: (_) => setState(() => type = 'withdrawal')),
-          ChoiceChip(label: const Text('Dépôts'), selected: type == 'deposit', onSelected: (_) => setState(() => type = 'deposit')),
-        ]),
-        const SizedBox(height: 8),
-        Wrap(spacing: 8, children: [
-          ChoiceChip(label: const Text('Aujourd’hui'), selected: period == 'today', onSelected: (_) => setState(() => period = 'today')),
-          ChoiceChip(label: const Text('7 jours'), selected: period == '7', onSelected: (_) => setState(() => period = '7')),
-          ChoiceChip(label: const Text('30 jours'), selected: period == '30', onSelected: (_) => setState(() => period = '30')),
-          ChoiceChip(label: const Text('Tout'), selected: period == 'all', onSelected: (_) => setState(() => period = 'all')),
-        ]),
-        const SizedBox(height: 12),
-        if (items.isEmpty) const Text('Aucune opération sur cette période.', style: TextStyle(color: AppColors.muted)),
-        ...items.map((operation) {
-          final hasToken = operation.isWithdrawal && (operation.tokenCode ?? '').isNotEmpty;
-          final tokenReady = hasToken && operation.status == 'payment_confirmed' && operation.tokenStatus == 'active';
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: SoftCard(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => tokenReady ? TokenPage(operation: operation) : OperationDetailPage(operationId: operation.id),
-                ),
-              ),
-              child: Row(children: [
-                CircleAvatar(backgroundColor: operation.isWithdrawal ? AppColors.brandSoft : AppColors.mintSoft, child: Icon(operation.isWithdrawal ? Icons.south_west : Icons.north_east, color: operation.isWithdrawal ? AppColors.brand : AppColors.mint)),
-                const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(operation.isWithdrawal ? 'Retrait' : 'Dépôt', style: const TextStyle(fontWeight: FontWeight.w800)),
-                  Text('${operation.pdrName} · ${formatDate(operation.createdAt)}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-                  if (hasToken)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        tokenReady ? 'Jeton QR disponible' : 'Jeton ${operation.tokenCode}',
-                        style: TextStyle(color: tokenReady ? AppColors.brand : AppColors.muted, fontWeight: FontWeight.w700, fontSize: 12),
+    return CustomScrollView(
+      slivers: [
+        const SliverPadding(
+          padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
+          sliver: SliverToBoxAdapter(
+            child: Text('Historique', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+          sliver: SliverToBoxAdapter(
+            child: Wrap(spacing: 8, children: [
+              ChoiceChip(label: const Text('Tout'), selected: type == 'all', onSelected: (_) => setState(() => type = 'all')),
+              ChoiceChip(label: const Text('Retraits'), selected: type == 'withdrawal', onSelected: (_) => setState(() => type = 'withdrawal')),
+              ChoiceChip(label: const Text('Dépôts'), selected: type == 'deposit', onSelected: (_) => setState(() => type = 'deposit')),
+            ]),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          sliver: SliverToBoxAdapter(
+            child: Wrap(spacing: 8, children: [
+              ChoiceChip(label: const Text('Aujourd’hui'), selected: period == 'today', onSelected: (_) => setState(() => period = 'today')),
+              ChoiceChip(label: const Text('7 jours'), selected: period == '7', onSelected: (_) => setState(() => period = '7')),
+              ChoiceChip(label: const Text('30 jours'), selected: period == '30', onSelected: (_) => setState(() => period = '30')),
+              ChoiceChip(label: const Text('Tout'), selected: period == 'all', onSelected: (_) => setState(() => period = 'all')),
+            ]),
+          ),
+        ),
+        if (items.isEmpty)
+          const SliverPadding(
+            padding: EdgeInsets.fromLTRB(20, 12, 20, 24),
+            sliver: SliverToBoxAdapter(child: Text('Aucune opération sur cette période.', style: TextStyle(color: AppColors.muted))),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final operation = items[index];
+                  final hasToken = operation.isWithdrawal && (operation.tokenCode ?? '').isNotEmpty;
+                  final tokenReady = hasToken && operation.status == 'payment_confirmed' && operation.tokenStatus == 'active';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: SoftCard(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => tokenReady ? TokenPage(operation: operation) : OperationDetailPage(operationId: operation.id),
+                        ),
                       ),
+                      child: Row(children: [
+                        CircleAvatar(backgroundColor: operation.isWithdrawal ? AppColors.brandSoft : AppColors.mintSoft, child: Icon(operation.isWithdrawal ? Icons.south_west : Icons.north_east, color: operation.isWithdrawal ? AppColors.brand : AppColors.mint)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(operation.isWithdrawal ? 'Retrait' : 'Dépôt', style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text('${operation.pdrName} · ${formatDate(operation.createdAt)}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                            if (hasToken)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  tokenReady ? 'Jeton QR disponible' : 'Jeton ${operation.tokenCode}',
+                                  style: TextStyle(color: tokenReady ? AppColors.brand : AppColors.muted, fontWeight: FontWeight.w700, fontSize: 12),
+                                ),
+                              ),
+                          ]),
+                        ),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          Text(formatMoney(operation.amount, operation.currency), style: const TextStyle(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 4),
+                          StatusPill(status: operation.status, type: operation.type),
+                          if (tokenReady) ...[
+                            const SizedBox(height: 4),
+                            const Icon(Icons.qr_code_2_rounded, color: AppColors.brand, size: 18),
+                          ],
+                        ]),
+                      ]),
                     ),
-                ])),
-                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Text(formatMoney(operation.amount, operation.currency), style: const TextStyle(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 4),
-                  StatusPill(status: operation.status, type: operation.type),
-                  if (tokenReady) ...[
-                    const SizedBox(height: 4),
-                    const Icon(Icons.qr_code_2_rounded, color: AppColors.brand, size: 18),
-                  ],
-                ]),
-              ]),
+                  );
+                },
+                childCount: items.length,
+              ),
             ),
-          );
-        }),
+          ),
       ],
     );
   }

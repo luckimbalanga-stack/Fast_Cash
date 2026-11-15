@@ -1,6 +1,6 @@
 """Modèles de données Fast-Cash."""
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.db import Base
@@ -42,6 +42,7 @@ class OtpChallenge(Base):
 
 class Pdr(Base):
     __tablename__ = "pdrs"
+    __table_args__ = (Index("ix_pdrs_status_is_open", "status", "is_open"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     code: Mapped[str] = mapped_column(String(20), unique=True)

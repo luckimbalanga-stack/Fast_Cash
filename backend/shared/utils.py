@@ -109,12 +109,16 @@ def round_money(amount: float, currency: str) -> float:
     return float(round(amount + 1e-9, 2))
 
 
-def make_reference(existing: set[str]) -> str:
-    while True:
+def make_reference(existing: set[str] | None = None) -> str:
+    """Génère une référence FC-XXXX-XXXX. `existing` est optionnel (legacy)."""
+    for _ in range(40):
         code = f"FC-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}"
-        if code not in existing:
+        if existing is not None:
+            if code in existing:
+                continue
             existing.add(code)
-            return code
+        return code
+    raise RuntimeError("Impossible de générer une référence unique.")
 
 
 def parse_bearer(authorization: str | None) -> tuple[str, int]:

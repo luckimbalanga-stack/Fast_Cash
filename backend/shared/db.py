@@ -131,6 +131,17 @@ def _ensure_otp_code_column_width() -> None:
         connection.execute(text("ALTER TABLE otp_challenges ALTER COLUMN code TYPE VARCHAR(64)"))
 
 
+def _ensure_perf_indexes() -> None:
+    inspector = inspect(engine)
+    if "pdrs" not in inspector.get_table_names():
+        return
+    existing = {idx["name"] for idx in inspector.get_indexes("pdrs")}
+    if "ix_pdrs_status_is_open" in existing:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_pdrs_status_is_open ON pdrs (status, is_open)"))
+
+
 def init_database(seed: bool = False) -> None:
     from shared import models  # noqa: F401
 
@@ -139,6 +150,7 @@ def init_database(seed: bool = False) -> None:
     _ensure_admin_password_column()
     _ensure_pdr_password_column()
     _ensure_otp_code_column_width()
+    _ensure_perf_indexes()
     if seed:
         from shared.seed import (
             ensure_app_update_settings,

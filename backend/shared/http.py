@@ -12,8 +12,8 @@ PDR_URL = os.getenv("PDR_URL", "http://127.0.0.1:8002")
 NOTIF_URL = os.getenv("NOTIF_URL", "http://127.0.0.1:8004")
 
 
-def create_app(service_name: str) -> FastAPI:
-    app = FastAPI(title=f"Fast-Cash — {service_name}", version="1.0.0")
+def create_app(service_name: str, lifespan=None) -> FastAPI:
+    app = FastAPI(title=f"Fast-Cash — {service_name}", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

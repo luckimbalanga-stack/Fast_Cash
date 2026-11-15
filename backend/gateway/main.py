@@ -1,6 +1,7 @@
 """Passerelle API : point d'entrée unique des microservices."""
 
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -12,8 +13,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from shared.http import create_app
-
-app = create_app("gateway")
 
 ROUTES = [
     ("/api/auth", "http://127.0.0.1:8001", "/auth"),
@@ -34,6 +33,22 @@ SERVICES = {
     "notifications": "http://127.0.0.1:8004/health",
     "admin": "http://127.0.0.1:8005/health",
 }
+
+_http_client: httpx.AsyncClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    global _http_client
+    _http_client = httpx.AsyncClient(timeout=20)
+    try:
+        yield
+    finally:
+        await _http_client.aclose()
+        _http_client = None
+
+
+app = create_app("gateway", lifespan=lifespan)
 
 
 def _target(path: str) -> str | None:
@@ -81,9 +96,13 @@ async def proxy(full_path: str, request: Request):
         if key.lower() not in {"host", "content-length"}
     }
     body = await request.body()
+    client = _http_client or httpx.AsyncClient(timeout=20)
+    owns_client = _http_client is None
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.request(request.method, url, content=body, headers=headers)
+        response = await client.request(request.method, url, content=body, headers=headers)
     except httpx.HTTPError:
         return JSONResponse({"detail": "Service indisponible."}, status_code=503)
+    finally:
+        if owns_client:
+            await client.aclose()
     return Response(content=response.content, status_code=response.status_code, media_type=response.headers.get("content-type"))

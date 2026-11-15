@@ -1,7 +1,7 @@
 """Règles métier du service Opérations."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -16,6 +16,10 @@ from shared.utils import KINSHASA, make_reference, normalize_phone, now_iso, par
 def _setting(db: Session, key: str, default: str) -> str:
     row = db.get(Setting, key)
     return row.value if row else default
+
+
+def _offer_seconds(db: Session) -> int:
+    return max(5, min(120, int(float(_setting(db, "pdr_offer_seconds", "30")))))
 
 
 def _fee(db: Session, amount: float, currency: str) -> float:
@@ -51,8 +55,77 @@ def _liquidity(path: str, op: Operation) -> None:
     internal_post(PDR_URL, path, {"currency": op.currency, "amount": op.amount})
 
 
-def maybe_expire(db: Session, op: Operation) -> None:
-    """Les jetons restent actifs jusqu'au scan PDR. On réactive ceux déjà expirés."""
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=KINSHASA)
+    return value.astimezone(KINSHASA)
+
+
+def _offer_deadline_at(created_at: str, offer_seconds: int) -> datetime | None:
+    if not created_at:
+        return None
+    try:
+        created = _aware(parse_iso(created_at))
+    except Exception:
+        return None
+    return created + timedelta(seconds=offer_seconds)
+
+
+def _close_pending_offer(db: Session, op: Operation, label: str) -> bool:
+    """Clôture une offre pending expirée / abandonnée — pas de file d’attente fantôme."""
+    if op.status != "pending":
+        return False
+    _touch(db, op, "cancelled", label)
+    return True
+
+
+def cancel_pending_for_pdr(db: Session, pdr_id: int, label: str = "Point de retrait indisponible") -> int:
+    """Annule toutes les offres en attente d’un PDR (fermeture / déconnexion)."""
+    rows = (
+        db.query(Operation)
+        .filter(Operation.pdr_id == pdr_id, Operation.status == "pending")
+        .all()
+    )
+    closed = 0
+    for op in rows:
+        if _close_pending_offer(db, op, label):
+            closed += 1
+            notify(
+                "user",
+                op.user_id,
+                "Point indisponible",
+                f"{op.pdr_name} n’est plus disponible. La demande passe au point suivant.",
+                op.id,
+            )
+    return closed
+
+
+def expire_stale_pending(db: Session, *, user_id: int | None = None, pdr_id: int | None = None) -> int:
+    """Expire en lot les offres pending hors délai (une lecture settings)."""
+    offer_seconds = _offer_seconds(db)
+    now = datetime.now(KINSHASA)
+    query = db.query(Operation).filter(Operation.status == "pending")
+    if user_id is not None:
+        query = query.filter(Operation.user_id == user_id)
+    if pdr_id is not None:
+        query = query.filter(Operation.pdr_id == pdr_id)
+    closed = 0
+    for op in query.all():
+        deadline = _offer_deadline_at(op.created_at, offer_seconds)
+        if deadline is not None and now >= deadline:
+            if _close_pending_offer(db, op, "Délai d’offre écoulé — passage au point suivant"):
+                closed += 1
+    return closed
+
+
+def maybe_expire(db: Session, op: Operation, *, offer_seconds: int | None = None) -> None:
+    """Expire les offres pending hors délai, puis gère les jetons de retrait."""
+    if op.status == "pending":
+        seconds = offer_seconds if offer_seconds is not None else _offer_seconds(db)
+        deadline = _offer_deadline_at(op.created_at, seconds)
+        if deadline is not None and datetime.now(KINSHASA) >= deadline:
+            _close_pending_offer(db, op, "Délai d’offre écoulé — passage au point suivant")
+            return
     if op.type != "withdrawal":
         return
     if op.status == "expired" and op.token_status == "expired":
@@ -88,6 +161,24 @@ def _visible(op: Operation, role: str, ident: int) -> None:
         raise HTTPException(status_code=403, detail="Cette opération ne concerne pas votre point de retrait.")
 
 
+def _prefetch_timelines(db: Session, operation_ids: list[int]) -> dict[int, list[TimelineEvent]]:
+    if not operation_ids:
+        return {}
+    rows = (
+        db.query(TimelineEvent)
+        .filter(TimelineEvent.operation_id.in_(operation_ids))
+        .order_by(TimelineEvent.id.asc())
+        .all()
+    )
+    grouped: dict[int, list[TimelineEvent]] = {op_id: [] for op_id in operation_ids}
+    for event in rows:
+        grouped.setdefault(event.operation_id, []).append(event)
+    return grouped
+
+
+LIST_OPERATIONS_LIMIT = 100
+
+
 def list_operations(
     db: Session,
     role: str,
@@ -101,36 +192,49 @@ def list_operations(
     date_to: str | None,
     query: str | None,
 ) -> list[dict]:
-    rows = db.query(Operation).order_by(Operation.created_at.desc()).all()
+    # Expire d’abord le périmètre visible (évite N lectures settings).
+    if role == "user":
+        expire_stale_pending(db, user_id=ident)
+    elif role == "pdr":
+        expire_stale_pending(db, pdr_id=ident)
+    else:
+        expire_stale_pending(db)
+
+    q = db.query(Operation)
+    if role == "user":
+        q = q.filter(Operation.user_id == ident)
+    elif role == "pdr":
+        q = q.filter(Operation.pdr_id == ident)
+    elif role == "admin":
+        if pdr_id:
+            q = q.filter(Operation.pdr_id == pdr_id)
+        if user_id:
+            q = q.filter(Operation.user_id == user_id)
+    if type_:
+        q = q.filter(Operation.type == type_)
+    if status:
+        q = q.filter(Operation.status == status)
+    if currency:
+        q = q.filter(Operation.currency == currency)
+    if date_from:
+        q = q.filter(Operation.created_at >= date_from)
+    if date_to:
+        q = q.filter(Operation.created_at <= f"{date_to}T23:59:59")
+
     needle = (query or "").strip().lower()
-    payload = []
-    for op in rows:
-        maybe_expire(db, op)
-        if role == "user" and op.user_id != ident:
-            continue
-        if role == "pdr" and op.pdr_id != ident:
-            continue
-        if role == "admin":
-            if pdr_id and op.pdr_id != pdr_id:
-                continue
-            if user_id and op.user_id != user_id:
-                continue
-        if type_ and op.type != type_:
-            continue
-        if status and op.status != status:
-            continue
-        if currency and op.currency != currency:
-            continue
-        if date_from and op.created_at[:10] < date_from:
-            continue
-        if date_to and op.created_at[:10] > date_to:
-            continue
-        if needle and needle not in " ".join(
-            [op.reference, op.user_name, op.pdr_name, op.phone, op.token_code or ""]
-        ).lower():
-            continue
-        payload.append(present(db, op))
-    return payload
+    rows = q.order_by(Operation.created_at.desc()).limit(LIST_OPERATIONS_LIMIT * 3 if needle else LIST_OPERATIONS_LIMIT).all()
+    if needle:
+        filtered = []
+        for op in rows:
+            hay = " ".join([op.reference, op.user_name, op.pdr_name, op.phone, op.token_code or ""]).lower()
+            if needle in hay:
+                filtered.append(op)
+            if len(filtered) >= LIST_OPERATIONS_LIMIT:
+                break
+        rows = filtered
+
+    timelines = _prefetch_timelines(db, [op.id for op in rows])
+    return [operation_dict(op, timelines.get(op.id, [])) for op in rows]
 
 
 def create_operation(db: Session, user_id: int, data: dict) -> dict:
@@ -162,10 +266,28 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
 
     if not is_match(pdr, kind, currency, amount, number.network):
         raise HTTPException(status_code=409, detail="Ce PDR ne peut pas traiter cette opération pour le moment.")
-    existing = {row[0] for row in db.query(Operation.reference).all()}
-    existing.update(row[0] for row in db.query(Operation.token_code).filter(Operation.token_code.is_not(None)).all())
+    # Chaînage : clôturer les offres pending précédentes du même utilisateur
+    # pour qu’un PDR déjà sauté ne puisse plus accepter.
+    for old in (
+        db.query(Operation)
+        .filter(Operation.user_id == user_id, Operation.status == "pending")
+        .all()
+    ):
+        _close_pending_offer(db, old, "Passage au point suivant")
+
+    fees = _fee(db, amount, currency)
+    offer_seconds = _offer_seconds(db)
+    reference = None
+    for _ in range(12):
+        candidate = make_reference()
+        if db.query(Operation.id).filter(Operation.reference == candidate).first():
+            continue
+        reference = candidate
+        break
+    if not reference:
+        raise HTTPException(status_code=500, detail="Impossible de créer la référence d’opération.")
     op = Operation(
-        reference=make_reference(existing),
+        reference=reference,
         type=kind,
         user_id=user.id,
         user_name=user.name,
@@ -181,7 +303,7 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
         network=number.network,
         amount=amount,
         currency=currency,
-        fees=_fee(db, amount, currency),
+        fees=fees,
         status="pending",
         reserved=False,
         created_at=now_iso(),
@@ -189,8 +311,8 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
     )
     db.add(op)
     db.flush()
+
     verb = "un retrait" if kind == "withdrawal" else "un dépôt"
-    offer_seconds = max(5, min(120, int(float(_setting(db, "pdr_offer_seconds", "30")))))
     db.add(TimelineEvent(operation_id=op.id, status="pending", label="Demande envoyée", created_at=op.created_at))
     notify(
         "pdr",
@@ -299,16 +421,22 @@ def simulate_transfer(db: Session, role: str, ident: int, operation_id: int) -> 
 def cancel(db: Session, role: str, ident: int, operation_id: int) -> dict:
     op = get_operation(db, operation_id)
     _visible(op, role, ident)
+    if op.status == "cancelled":
+        return present(db, op)
     if op.status not in {"pending", "accepted", "pin_required", "payment_pending", "payment_confirmed"}:
         raise HTTPException(status_code=409, detail="Cette opération ne peut plus être annulée.")
+    was_offer = op.status == "pending"
     if op.reserved:
         _liquidity(f"/pdr/{op.pdr_id}/liquidity/release", op)
         op.reserved = False
     if op.token_status == "active":
         op.token_status = "cancelled"
-    _touch(db, op, "cancelled", "Opération annulée")
-    notify("user", op.user_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
-    notify("pdr", op.pdr_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
+    label = "Délai d’offre écoulé — passage au point suivant" if was_offer else "Opération annulée"
+    _touch(db, op, "cancelled", label)
+    # Offre pending : pas de notif (le chaînage mobile passe au PDR suivant).
+    if not was_offer:
+        notify("user", op.user_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
+        notify("pdr", op.pdr_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
     return present(db, op)
 
 

@@ -24,6 +24,10 @@ class AppController extends ChangeNotifier {
   List<PdrPoint> directory = [];
   List<RatingItem> ratings = [];
   Timer? _sync;
+  bool _refreshing = false;
+  bool _lightOnly = false;
+  bool _syncPaused = false;
+  DateTime? _lastFullRefresh;
   String installedVersion = '1.0.0';
   AppUpdateInfo? pendingUpdate;
   bool updatePromptShown = false;
@@ -102,7 +106,7 @@ class AppController extends ChangeNotifier {
         final fresh = await api.send('GET', '/api/pdr/$pdrId', token: token);
         pdr = PdrPoint.fromJson(fresh as Map<String, dynamic>);
       }
-      await refreshQuiet();
+      await refreshFull();
       if (role == 'user' && user == null) throw StateError('user');
       if (role == 'pdr' && pdr == null) throw StateError('pdr');
       _startSync();
@@ -157,7 +161,7 @@ class AppController extends ChangeNotifier {
     token = map['token'] as String;
     role = 'user';
     _applyUser(map['user'] as Map<String, dynamic>);
-    await refreshQuiet();
+    await refreshFull();
     await _persistSession();
     _startSync();
     notifyListeners();
@@ -181,22 +185,89 @@ class AppController extends ChangeNotifier {
     token = map['token'] as String;
     role = 'pdr';
     pdr = PdrPoint.fromJson(map['pdr'] as Map<String, dynamic>);
-    await refreshQuiet();
+    await refreshFull();
     await _persistSession();
     _startSync();
     notifyListeners();
   }
 
-  void _startSync() {
-    _sync?.cancel();
-    // PDR : sync plus rapide pour l’appel entrant.
-    final seconds = role == 'pdr' ? 2 : 4;
-    _sync = Timer.periodic(Duration(seconds: seconds), (_) => refreshQuiet());
+  void pauseSync() {
+    _syncPaused = true;
   }
 
-  Future<void> refreshQuiet() async {
-    if (token == null) return;
+  void resumeSync() {
+    _syncPaused = false;
+    _startSync();
+  }
+
+  void _startSync() {
+    _sync?.cancel();
+    if (token == null || role == 'guest') return;
+    // PDR : un peu plus fréquent pour l’appel entrant ; user plus espacé.
+    final seconds = role == 'pdr' ? 3 : 7;
+    _sync = Timer.periodic(Duration(seconds: seconds), (_) {
+      if (_syncPaused) return;
+      final dueFull = _lastFullRefresh == null || DateTime.now().difference(_lastFullRefresh!) > const Duration(seconds: 45);
+      if (dueFull) {
+        unawaited(refreshFull());
+      } else {
+        unawaited(refreshLight());
+      }
+    });
+  }
+
+  String _opsSignature(List<CashOperation> items) => items.map((item) => '${item.id}:${item.status}').join('|');
+
+  String _notesSignature(List<AppNotification> items) => items.map((item) => '${item.id}:${item.isRead}').join('|');
+
+  void _upsertOperation(CashOperation operation) {
+    final index = operations.indexWhere((item) => item.id == operation.id);
+    if (index >= 0) {
+      operations = [...operations]..[index] = operation;
+    } else {
+      operations = [operation, ...operations];
+    }
+  }
+
+  /// Sync léger : opérations + notifications uniquement.
+  Future<void> refreshLight() async {
+    if (token == null || _refreshing) return;
+    _refreshing = true;
+    _lightOnly = true;
     try {
+      final previousOps = _opsSignature(operations);
+      final previousNotes = _notesSignature(notifications);
+      final results = await Future.wait([
+        api.send('GET', '/api/operations', token: token),
+        api.send('GET', '/api/notifications', token: token),
+      ]);
+      operations = (results[0] as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
+      notifications = (results[1] as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
+      final changed = previousOps != _opsSignature(operations) || previousNotes != _notesSignature(notifications);
+      if (changed) notifyListeners();
+    } catch (_) {
+    } finally {
+      _refreshing = false;
+      _lightOnly = false;
+    }
+  }
+
+  /// Sync complet : settings + profil/PDR + ops + notifs.
+  Future<void> refreshFull() async {
+    if (token == null) return;
+    if (_refreshing && !_lightOnly) return;
+    var wait = 0;
+    while (_refreshing && _lightOnly && wait < 40) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      wait += 1;
+    }
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final previousOps = _opsSignature(operations);
+      final previousNotes = _notesSignature(notifications);
+      final previousPdrOpen = pdr?.isOpen;
+      final previousUserId = user?.id;
       try {
         final settingsJson = await api.send('GET', '/api/settings');
         settings = AppSettings.fromJson(settingsJson as Map<String, dynamic>);
@@ -206,18 +277,33 @@ class AppController extends ChangeNotifier {
         final me = await api.send('GET', '/api/users/me', token: token);
         _applyUser(me as Map<String, dynamic>);
       } else if (role == 'pdr' && pdr != null) {
-        final fresh = await api.send('GET', '/api/pdr/${pdr!.id}', token: token);
-        pdr = PdrPoint.fromJson(fresh as Map<String, dynamic>);
-        final ratingJson = await api.send('GET', '/api/pdr/ratings?pdr_id=${pdr!.id}', token: token);
-        ratings = (ratingJson as List).map((item) => RatingItem.fromJson(item as Map<String, dynamic>)).toList();
+        final results = await Future.wait([
+          api.send('GET', '/api/pdr/${pdr!.id}', token: token),
+          api.send('GET', '/api/pdr/ratings?pdr_id=${pdr!.id}', token: token),
+        ]);
+        pdr = PdrPoint.fromJson(results[0] as Map<String, dynamic>);
+        ratings = (results[1] as List).map((item) => RatingItem.fromJson(item as Map<String, dynamic>)).toList();
       }
-      final ops = await api.send('GET', '/api/operations', token: token);
-      operations = (ops as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
-      final notes = await api.send('GET', '/api/notifications', token: token);
-      notifications = (notes as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
-      notifyListeners();
-    } catch (_) {}
+      final opsNotes = await Future.wait([
+        api.send('GET', '/api/operations', token: token),
+        api.send('GET', '/api/notifications', token: token),
+      ]);
+      operations = (opsNotes[0] as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
+      notifications = (opsNotes[1] as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
+      _lastFullRefresh = DateTime.now();
+      final changed = previousOps != _opsSignature(operations) ||
+          previousNotes != _notesSignature(notifications) ||
+          previousPdrOpen != pdr?.isOpen ||
+          previousUserId != user?.id;
+      if (changed) notifyListeners();
+    } catch (_) {
+    } finally {
+      _refreshing = false;
+    }
   }
+
+  /// Compat : sync léger par défaut (polling).
+  Future<void> refreshQuiet() => refreshLight();
 
   Future<SearchResult> searchPdr({
     required double lat,
@@ -288,14 +374,17 @@ class AppController extends ChangeNotifier {
       'type': type,
     });
     final operation = CashOperation.fromJson(json as Map<String, dynamic>);
-    await refreshQuiet();
+    _upsertOperation(operation);
+    notifyListeners();
     return operation;
   }
 
   Future<CashOperation> postAction(int id, String action, {Map<String, dynamic>? body}) async {
     final json = await api.send('POST', '/api/operations/$id/$action', token: token, body: body ?? {});
-    await refreshQuiet();
-    return CashOperation.fromJson(json as Map<String, dynamic>);
+    final operation = CashOperation.fromJson(json as Map<String, dynamic>);
+    _upsertOperation(operation);
+    notifyListeners();
+    return operation;
   }
 
   Future<Map<String, dynamic>> lookupToken(String code) async {
@@ -305,8 +394,10 @@ class AppController extends ChangeNotifier {
 
   Future<CashOperation> redeemToken(String code) async {
     final json = await api.send('POST', '/api/operations/token/redeem', token: token, body: {'code': code.trim().toUpperCase()});
-    await refreshQuiet();
-    return CashOperation.fromJson(json as Map<String, dynamic>);
+    final operation = CashOperation.fromJson(json as Map<String, dynamic>);
+    _upsertOperation(operation);
+    notifyListeners();
+    return operation;
   }
 
   Future<Map<String, dynamic>> requestPhoneChallenge(String phone, String? network) async {
@@ -316,13 +407,13 @@ class AppController extends ChangeNotifier {
 
   Future<void> confirmPhone(String phone, String network, String code) async {
     await api.send('POST', '/api/phones', token: token, body: {'phone': phone, 'network': network, 'code': code});
-    await refreshQuiet();
+    await refreshFull();
   }
 
   Future<void> setPrimary(int id) async {
     await api.send('PATCH', '/api/phones/$id/primary', token: token, body: {});
     selectedPhoneId = id;
-    await refreshQuiet();
+    await refreshFull();
   }
 
   void useForTransaction(int id) {
@@ -333,12 +424,12 @@ class AppController extends ChangeNotifier {
 
   Future<void> updateNetwork(int id, String network) async {
     await api.send('PATCH', '/api/phones/$id', token: token, body: {'network': network});
-    await refreshQuiet();
+    await refreshFull();
   }
 
   Future<void> deletePhone(int id) async {
     await api.send('DELETE', '/api/phones/$id', token: token);
-    await refreshQuiet();
+    await refreshFull();
   }
 
   Future<Map<String, dynamic>> detectPhone(String phone) async {
@@ -355,16 +446,28 @@ class AppController extends ChangeNotifier {
 
   Future<void> markRead(int id) async {
     await api.send('PATCH', '/api/notifications/$id/read', token: token, body: {});
-    await refreshQuiet();
+    notifications = [
+      for (final item in notifications)
+        if (item.id == id)
+          AppNotification(id: item.id, title: item.title, body: item.body, isRead: true, createdAt: item.createdAt, operationId: item.operationId)
+        else
+          item,
+    ];
+    notifyListeners();
   }
 
   Future<void> markAllRead() async {
     await api.send('POST', '/api/notifications/read-all', token: token, body: {});
-    await refreshQuiet();
+    notifications = [
+      for (final item in notifications)
+        AppNotification(id: item.id, title: item.title, body: item.body, isRead: true, createdAt: item.createdAt, operationId: item.operationId),
+    ];
+    notifyListeners();
   }
 
   Future<void> logout() async {
     _sync?.cancel();
+    _syncPaused = false;
     token = null;
     role = 'guest';
     user = null;

@@ -128,38 +128,87 @@ export class AppController {
   }
 
   open(section) {
+    if (section !== 'reports') {
+      this.reportFrom = null
+      this.reportTo = null
+    }
     this.setState({ section, pdrDraft: null, error: '', notice: '' })
+    const key = section === 'pdr-form' ? 'pdr' : section
+    return this.run(() => this.loadSection(key))
   }
 
   openPdrForm(pdr = null) {
     this.setState({ section: 'pdr-form', pdrDraft: pdr, error: '', notice: '' })
   }
 
+  async loadDashboard() {
+    const [dashboard, charts] = await Promise.all([
+      this.model.dashboard(this.token),
+      this.model.charts(this.token),
+    ])
+    this.setState({ dashboard, charts })
+  }
+
+  async loadUsers() {
+    this.setState({ users: await this.model.users(this.token) })
+  }
+
+  async loadPdrs() {
+    this.setState({ pdrs: await this.model.pdrs(this.token) })
+  }
+
+  async loadOperations() {
+    this.setState({ operations: await this.model.operations(this.token) })
+  }
+
+  async loadTeam() {
+    this.setState({ team: await this.model.team(this.token) })
+  }
+
+  async loadSettings() {
+    const settings = await this.model.settings()
+    this.setState({ settings, banner: settings.banner || '' })
+  }
+
+  async loadSection(section) {
+    switch (section) {
+      case 'dashboard':
+        await this.loadDashboard()
+        break
+      case 'users':
+        await this.loadUsers()
+        break
+      case 'pdr':
+      case 'pdr-form':
+        await this.loadPdrs()
+        break
+      case 'operations':
+        await this.loadOperations()
+        break
+      case 'team':
+        await this.loadTeam()
+        break
+      case 'settings':
+        await this.loadSettings()
+        break
+      case 'reports':
+        break
+      default:
+        await this.loadDashboard()
+    }
+  }
+
   async refresh() {
     const token = this.token
-    const [dashboard, charts, users, pdrs, team, settings, operations, reports] = await Promise.all([
-      this.model.dashboard(token),
-      this.model.charts(token),
-      this.model.users(token),
-      this.model.pdrs(token),
-      this.model.team(token),
-      this.model.settings(),
-      this.model.operations(token),
-      this.reportFrom ? this.model.reports(token, this.reportFrom, this.reportTo) : Promise.resolve(this.state.reports),
-    ])
-    this.setState({
-      dashboard,
-      charts,
-      users,
-      pdrs,
-      team,
-      settings,
-      operations,
-      reports,
-      banner: settings.banner || '',
-      ready: true,
-      busy: false,
-    })
+    const section = this.state.section === 'pdr-form' ? 'pdr' : this.state.section
+    const settings = await this.model.settings()
+    this.setState({ settings, banner: settings.banner || '' })
+    await this.loadSection(section)
+    if (section === 'reports' && this.reportFrom) {
+      const reports = await this.model.reports(token, this.reportFrom, this.reportTo)
+      this.setState({ reports })
+    }
+    this.setState({ ready: true, busy: false })
   }
 
   reload() {
@@ -178,7 +227,7 @@ export class AppController {
   setUserStatus(id, status) {
     return this.run(async () => {
       await this.model.setUserStatus(this.token, id, status)
-      await this.refresh()
+      await this.loadUsers()
       this.setState({ notice: status === 'active' ? 'Compte réactivé.' : 'Compte suspendu.' })
     })
   }
@@ -195,7 +244,7 @@ export class AppController {
         network: String(row.network || '').trim() || null,
         status: String(row.status || 'actif').trim() || 'actif',
       })))
-      await this.refresh()
+      await this.loadUsers()
       const created = result?.created_count || 0
       const failed = result?.error_count || 0
       this.setState({
@@ -263,7 +312,7 @@ export class AppController {
           is_open: body.is_open,
         })
       }
-      await this.refresh()
+      await this.loadPdrs()
       this.setState({
         section: 'pdr',
         pdrDraft: null,
@@ -276,7 +325,7 @@ export class AppController {
   async resetPdrPassword(id) {
     return this.run(async () => {
       const result = await this.model.resetPdrPassword(this.token, id, {})
-      await this.refresh()
+      await this.loadPdrs()
       const nextPassword = result.password || null
       const draft = this.state.pdrDraft
       this.setState({
@@ -296,7 +345,7 @@ export class AppController {
   deactivatePdr(id) {
     return this.run(async () => {
       await this.model.deactivatePdr(this.token, id)
-      await this.refresh()
+      await this.loadPdrs()
       this.setState({ section: 'pdr', pdrDraft: null, notice: 'Point désactivé.' })
     })
   }
@@ -345,7 +394,7 @@ export class AppController {
     }
     return this.run(async () => {
       await this.model.createMember(this.token, { name, email, role: input.role, password })
-      await this.refresh()
+      await this.loadTeam()
       this.setState({ notice: 'Administrateur ajouté.' })
     })
   }
@@ -357,7 +406,7 @@ export class AppController {
     }
     return this.run(async () => {
       await this.model.updateMember(this.token, id, body)
-      await this.refresh()
+      await this.loadTeam()
       this.setState({ notice: 'Équipe mise à jour.' })
     })
   }
