@@ -8,6 +8,7 @@ import '../../controllers/app_controller.dart';
 import '../../core/api.dart';
 import '../../core/format.dart';
 import '../../models/models.dart';
+import '../../services/pdr_call_alert.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/widgets.dart';
 import 'incoming_call.dart';
@@ -21,111 +22,25 @@ class PdrShell extends StatefulWidget {
 
 class _PdrShellState extends State<PdrShell> {
   int index = 0;
-  int? _shownCallId;
-  bool _openingCall = false;
-
-  int _offerSeconds(AppController controller) => controller.settings.pdrOfferSeconds.clamp(5, 120);
-
-  CashOperation? _liveIncoming(AppController controller) {
-    final wait = _offerSeconds(controller);
-    final candidates = controller.operations.where((op) => IncomingRequestCall.isLive(op, wait)).toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return candidates.isEmpty ? null : candidates.first;
-  }
-
-  Future<void> _ensureIncomingCall(CashOperation? incoming) async {
-    if (!mounted || _openingCall) return;
-    if (incoming == null) return;
-    if (_shownCallId == incoming.id) return;
-
-    _openingCall = true;
-    _shownCallId = incoming.id;
-    final operationId = incoming.id;
-    final messenger = ScaffoldMessenger.of(context);
-    final controller = context.read<AppController>();
-
-    try {
-      await showGeneralDialog<void>(
-        context: context,
-        useRootNavigator: true,
-        barrierDismissible: false,
-        barrierColor: Colors.black,
-        pageBuilder: (dialogContext, animation, secondaryAnimation) {
-          return PopScope(
-            canPop: false,
-            child: Consumer<AppController>(
-              builder: (context, liveController, _) {
-                final wait = _offerSeconds(liveController);
-                final current = liveController.operationById(operationId);
-                if (current == null || !IncomingRequestCall.isLive(current, wait)) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
-                      Navigator.of(dialogContext, rootNavigator: true).pop();
-                    }
-                  });
-                  return const SizedBox.shrink();
-                }
-                return IncomingRequestCall(
-                  key: ValueKey('incoming-$operationId-$wait'),
-                  operation: current,
-                  waitSeconds: wait,
-                  onExpired: () {
-                    // Clôture côté serveur pour sortir de la file d’attente, puis ferme l’appel.
-                    unawaited(() async {
-                      try {
-                        final current = liveController.operationById(operationId);
-                        if (current?.status == 'pending') {
-                          await liveController.postAction(operationId, 'cancel');
-                        }
-                      } catch (_) {}
-                      if (dialogContext.mounted && Navigator.of(dialogContext, rootNavigator: true).canPop()) {
-                        Navigator.of(dialogContext, rootNavigator: true).pop();
-                      }
-                    }());
-                  },
-                  onAccept: () async {
-                    try {
-                      await liveController.postAction(operationId, 'accept');
-                      if (!mounted) return;
-                      messenger.showSnackBar(
-                        const SnackBar(content: Text('Demande acceptée. Elle apparaît dans Acceptées.')),
-                      );
-                    } on ApiException catch (error) {
-                      messenger.showSnackBar(SnackBar(content: Text(error.message), backgroundColor: AppColors.danger));
-                      rethrow;
-                    }
-                  },
-                  onRefuse: () async {
-                    try {
-                      await liveController.postAction(operationId, 'refuse');
-                    } on ApiException catch (error) {
-                      messenger.showSnackBar(SnackBar(content: Text(error.message), backgroundColor: AppColors.danger));
-                      rethrow;
-                    }
-                  },
-                );
-              },
-            ),
-          );
-        },
-      );
-    } finally {
-      if (_shownCallId == operationId) _shownCallId = null;
-      _openingCall = false;
-      if (mounted && _liveIncoming(controller) != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _ensureIncomingCall(_liveIncoming(controller));
-        });
-      }
-    }
-  }
+  int? _alertedCallId;
 
   @override
   Widget build(BuildContext context) {
-    final incomingId = context.select<AppController, int?>((c) => _liveIncoming(c)?.id);
-    final incoming = incomingId == null ? null : context.read<AppController>().operationById(incomingId);
-    if (incomingId != null && incomingId != _shownCallId) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _ensureIncomingCall(incoming));
+    final incomingId = context.select<AppController, int?>((c) => c.liveIncomingOffer()?.id);
+    if (incomingId != null && incomingId != _alertedCallId) {
+      _alertedCallId = incomingId;
+      final controller = context.read<AppController>();
+      final incoming = controller.operationById(incomingId);
+      if (incoming != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(PdrCallAlert.showIncomingCall(
+            operation: incoming,
+            waitSeconds: controller.pdrOfferSeconds,
+          ));
+        });
+      }
+    } else if (incomingId == null) {
+      _alertedCallId = null;
     }
 
     final pages = [const PdrHomePage(), const PdrRequestsPage(), const PdrScanPage(), const PdrHistoryPage(), const PdrProfilePage()];
@@ -854,6 +769,7 @@ class _PdrNotes extends StatelessWidget {
           final wait = controller.settings.pdrOfferSeconds.clamp(5, 120);
           if (operation != null && IncomingRequestCall.isLive(operation, wait)) {
             Navigator.pop(context);
+            await PdrCallAlert.showIncomingCall(operation: operation, waitSeconds: wait);
             return;
           }
           Navigator.push(context, MaterialPageRoute(builder: (_) => PdrRequestPage(operationId: item.operationId!)));

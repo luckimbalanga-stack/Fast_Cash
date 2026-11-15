@@ -21,18 +21,14 @@ class ApiClient {
     http.Response response;
     try {
       final encoded = body == null ? null : jsonEncode(body);
-      switch (method) {
-        case 'POST':
-          response = await http.post(uri, headers: headers, body: encoded);
-        case 'PATCH':
-          response = await http.patch(uri, headers: headers, body: encoded);
-        case 'PUT':
-          response = await http.put(uri, headers: headers, body: encoded);
-        case 'DELETE':
-          response = await http.delete(uri, headers: headers);
-        default:
-          response = await http.get(uri, headers: headers);
-      }
+      final call = switch (method) {
+        'POST' => http.post(uri, headers: headers, body: encoded),
+        'PATCH' => http.patch(uri, headers: headers, body: encoded),
+        'PUT' => http.put(uri, headers: headers, body: encoded),
+        'DELETE' => http.delete(uri, headers: headers),
+        _ => http.get(uri, headers: headers),
+      };
+      response = await call.timeout(const Duration(seconds: 25));
     } catch (_) {
       throw ApiException('Impossible de joindre le serveur Fast-Cash. Vérifiez que l’API est démarrée.');
     }

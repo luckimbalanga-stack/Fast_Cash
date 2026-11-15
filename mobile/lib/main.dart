@@ -1,15 +1,29 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
 
 import 'controllers/app_controller.dart';
+import 'core/app_nav.dart';
+import 'services/pdr_call_alert.dart';
+import 'services/pdr_watchdog.dart';
 import 'theme/app_theme.dart';
 import 'views/auth/auth_pages.dart';
+import 'views/pdr/incoming_call_page.dart';
 import 'views/pdr/pdr_pages.dart';
 import 'views/user/user_shell.dart';
 import 'widgets/update_dialog.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Init non bloquant : ne doit pas retarder le premier frame.
+  unawaited(() async {
+    try {
+      await PdrCallAlert.init();
+      await PdrWatchdog.init();
+    } catch (_) {}
+  }());
   runApp(const FastCashApp());
 }
 
@@ -19,12 +33,37 @@ class FastCashApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => AppController()..bootstrap(),
+      create: (_) {
+        final controller = AppController()..bootstrap();
+        PdrWatchdog.onOfferFound = controller.handleWatchdogOffer;
+        PdrCallAlert.onOpenCall = (id) {
+          // Assure un refresh ops avant d’afficher si besoin.
+          if (controller.operationById(id) == null) {
+            controller.refreshLight();
+          }
+        };
+        return controller;
+      },
       child: MaterialApp(
         title: 'Fast-Cash',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
+        navigatorKey: appNavigatorKey,
         home: const RootGate(),
+        builder: (context, child) => WithForegroundTask(child: child ?? const SizedBox.shrink()),
+        onGenerateRoute: (settings) {
+          if (settings.name == IncomingCallPage.routeName) {
+            final id = settings.arguments;
+            if (id is int) {
+              return MaterialPageRoute<void>(
+                settings: settings,
+                fullscreenDialog: true,
+                builder: (_) => IncomingCallPage(operationId: id),
+              );
+            }
+          }
+          return null;
+        },
       ),
     );
   }

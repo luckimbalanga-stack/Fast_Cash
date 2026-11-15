@@ -8,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/api.dart';
 import '../core/version.dart';
 import '../models/models.dart';
+import '../services/pdr_call_alert.dart';
+import '../services/pdr_watchdog.dart';
+import '../views/pdr/incoming_call.dart';
 
 class AppController extends ChangeNotifier {
   AppController({ApiClient? api}) : api = api ?? ApiClient();
@@ -65,7 +68,14 @@ class AppController extends ChangeNotifier {
       settings = AppSettings.fromJson(json as Map<String, dynamic>);
       pendingUpdate = _resolveUpdate(settings, installedVersion);
     } catch (_) {}
-    await _restoreSession();
+    try {
+      await _restoreSession().timeout(const Duration(seconds: 30));
+    } catch (_) {
+      token = null;
+      role = 'guest';
+      user = null;
+      pdr = null;
+    }
     sessionReady = true;
     notifyListeners();
   }
@@ -110,6 +120,7 @@ class AppController extends ChangeNotifier {
       if (role == 'user' && user == null) throw StateError('user');
       if (role == 'pdr' && pdr == null) throw StateError('pdr');
       _startSync();
+      if (role == 'pdr') await _syncPdrWatchdog();
     } catch (_) {
       token = null;
       role = 'guest';
@@ -188,7 +199,54 @@ class AppController extends ChangeNotifier {
     await refreshFull();
     await _persistSession();
     _startSync();
+    await _syncPdrWatchdog();
     notifyListeners();
+  }
+
+  Future<void> _syncPdrWatchdog() async {
+    if (role != 'pdr' || token == null || pdr == null) {
+      await PdrWatchdog.stop();
+      await PdrCallAlert.dismiss();
+      return;
+    }
+    await PdrCallAlert.ensurePermissions();
+    await PdrWatchdog.start(
+      apiBase: api.base,
+      token: token!,
+      offerSeconds: pdrOfferSeconds,
+      isOpen: pdr!.isOpen,
+    );
+    _maybeRingIncoming();
+  }
+
+  CashOperation? liveIncomingOffer() {
+    if (role != 'pdr' || pdr == null || !pdr!.isOpen) return null;
+    final wait = pdrOfferSeconds;
+    final candidates = operations.where((op) => IncomingRequestCall.isLive(op, wait)).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
+  void _maybeRingIncoming() {
+    final incoming = liveIncomingOffer();
+    if (incoming == null) {
+      unawaited(PdrCallAlert.dismiss());
+      return;
+    }
+    unawaited(PdrCallAlert.showIncomingCall(operation: incoming, waitSeconds: pdrOfferSeconds));
+  }
+
+  /// Offre détectée par le service d’arrière-plan (app hors premier plan).
+  void handleWatchdogOffer(Map<String, dynamic> data) {
+    if (role != 'pdr' || pdr == null || !pdr!.isOpen) return;
+    final raw = data['raw'];
+    if (raw is Map<String, dynamic>) {
+      _upsertOperation(CashOperation.fromJson(raw));
+      notifyListeners();
+    } else {
+      unawaited(refreshLight());
+    }
+    _maybeRingIncoming();
   }
 
   void pauseSync() {
@@ -244,7 +302,10 @@ class AppController extends ChangeNotifier {
       operations = (results[0] as List).map((item) => CashOperation.fromJson(item as Map<String, dynamic>)).toList();
       notifications = (results[1] as List).map((item) => AppNotification.fromJson(item as Map<String, dynamic>)).toList();
       final changed = previousOps != _opsSignature(operations) || previousNotes != _notesSignature(notifications);
-      if (changed) notifyListeners();
+      if (changed) {
+        notifyListeners();
+        if (role == 'pdr') _maybeRingIncoming();
+      }
     } catch (_) {
     } finally {
       _refreshing = false;
@@ -296,6 +357,13 @@ class AppController extends ChangeNotifier {
           previousPdrOpen != pdr?.isOpen ||
           previousUserId != user?.id;
       if (changed) notifyListeners();
+      if (role == 'pdr') {
+        if (previousPdrOpen != pdr?.isOpen) {
+          unawaited(_syncPdrWatchdog());
+        } else {
+          _maybeRingIncoming();
+        }
+      }
     } catch (_) {
     } finally {
       _refreshing = false;
@@ -441,6 +509,7 @@ class AppController extends ChangeNotifier {
     if (pdr == null) return;
     final json = await api.send('POST', '/api/pdr/${pdr!.id}/availability', token: token, body: body);
     pdr = PdrPoint.fromJson(json as Map<String, dynamic>);
+    await _syncPdrWatchdog();
     notifyListeners();
   }
 
@@ -468,6 +537,8 @@ class AppController extends ChangeNotifier {
   Future<void> logout() async {
     _sync?.cancel();
     _syncPaused = false;
+    await PdrWatchdog.stop();
+    await PdrCallAlert.dismiss();
     token = null;
     role = 'guest';
     user = null;
