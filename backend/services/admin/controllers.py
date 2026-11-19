@@ -22,20 +22,27 @@ def dashboard(authorization: str | None = Header(default=None), db: Session = De
 
 
 @router.get("/admin/charts")
-def charts(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+def charts(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    network: str | None = None,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
     _admin(authorization)
-    return services.charts(db)
+    return services.charts(db, date_from, date_to, network)
 
 
 @router.get("/admin/reports")
 def reports(
     date_from: str | None = None,
     date_to: str | None = None,
+    network: str | None = None,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     _admin(authorization)
-    return services.reports(db, date_from, date_to)
+    return services.reports(db, date_from, date_to, network)
 
 
 @router.get("/admin/users")

@@ -4,10 +4,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from shared.models import AdminUser, Operation, Pdr, PhoneNumber, Setting, User
+from shared.models import AdminUser, Operation, Pdr, PhoneNumber, User
+from shared.operation_rules import amount_cdf, is_pdr_success
 from shared.serialize import admin_dict, user_dict
+from shared.settings_repo import APP_SETTING_DEFAULTS, settings_map, settings_payload, upsert_setting
 from shared.utils import (
     KINSHASA,
     NETWORKS,
@@ -19,41 +22,10 @@ from shared.utils import (
     round_money,
 )
 
-APP_SETTING_DEFAULTS = {
-    "app_version": "1.0.0",
-    "app_min_version": "1.0.0",
-    "app_download_url": "",
-    "app_update_message": "Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.",
-    "pdr_offer_seconds": "30",
-}
 
-
-def _settings_map(db: Session) -> dict[str, str]:
-    return {row.key: row.value for row in db.query(Setting).all()}
-
-
-def settings_payload(db: Session) -> dict:
-    raw = _settings_map(db)
-    return {
-        "fee_percent": float(raw.get("fee_percent", "1")),
-        "token_minutes": int(float(raw.get("token_minutes", "30"))),
-        "usd_cdf_rate": float(raw.get("usd_cdf_rate", "2880")),
-        "search_radius_m": int(float(raw.get("search_radius_m", "1000"))),
-        "pdr_offer_seconds": int(float(raw.get("pdr_offer_seconds", APP_SETTING_DEFAULTS.get("pdr_offer_seconds", "30")))),
-        "banner": raw.get("banner", ""),
-        "app_version": raw.get("app_version", APP_SETTING_DEFAULTS["app_version"]),
-        "app_min_version": raw.get("app_min_version", APP_SETTING_DEFAULTS["app_min_version"]),
-        "app_download_url": raw.get("app_download_url", APP_SETTING_DEFAULTS["app_download_url"]),
-        "app_update_message": raw.get("app_update_message", APP_SETTING_DEFAULTS["app_update_message"]),
-    }
-
-
-def _upsert_setting(db: Session, key: str, value: str) -> None:
-    row = db.get(Setting, key)
-    if not row:
-        db.add(Setting(key=key, value=value))
-    else:
-        row.value = value
+# Compatibilité des imports internes existants.
+_settings_map = settings_map
+_upsert_setting = upsert_setting
 
 
 def update_settings(db: Session, data: dict) -> dict:
@@ -115,12 +87,6 @@ def update_settings(db: Session, data: dict) -> dict:
     return settings_payload(db)
 
 
-def _amount_cdf(op: Operation, rate: float) -> float:
-    if op.currency == "CDF":
-        return op.amount
-    return op.amount * rate
-
-
 def _delta(current: float, previous: float) -> float | None:
     if previous == 0:
         return None
@@ -128,50 +94,100 @@ def _delta(current: float, previous: float) -> float | None:
 
 
 def dashboard(db: Session) -> dict:
+    from sqlalchemy import case, func
+
     now = datetime.now(KINSHASA)
-    ops = db.query(Operation).all()
-    users = db.query(User).count()
-    active_pdr = db.query(Pdr).filter(Pdr.status == "active", Pdr.is_open.is_(True)).count()
+    recent_start = (now - timedelta(days=15)).isoformat()
+    previous_start = (now - timedelta(days=30)).isoformat()
+    accepted_states = ("accepted", "payment_pending", "payment_confirmed", "cash_delivered", "completed")
 
-    def in_window(op: Operation, start: datetime, end: datetime) -> bool:
-        moment = datetime.fromisoformat(op.created_at)
-        return start <= moment < end
+    users = db.query(func.count(User.id)).scalar() or 0
+    active_pdr = db.query(func.count(Pdr.id)).filter(Pdr.status == "active", Pdr.is_open.is_(True)).scalar() or 0
+    row = db.query(
+        func.count(Operation.id),
+        func.sum(case((Operation.type == "withdrawal", 1), else_=0)),
+        func.sum(case((Operation.type == "deposit", 1), else_=0)),
+        func.sum(case((Operation.status == "pending", 1), else_=0)),
+        func.sum(case((Operation.status == "refused", 1), else_=0)),
+        func.sum(case((Operation.status == "completed", 1), else_=0)),
+        func.sum(case((Operation.status.in_(accepted_states), 1), else_=0)),
+        func.sum(case((Operation.created_at >= recent_start, 1), else_=0)),
+        func.sum(case((and_(Operation.created_at >= previous_start, Operation.created_at < recent_start), 1), else_=0)),
+        func.sum(case((and_(Operation.type == "withdrawal", Operation.created_at >= recent_start), 1), else_=0)),
+        func.sum(case((and_(Operation.type == "withdrawal", Operation.created_at >= previous_start, Operation.created_at < recent_start), 1), else_=0)),
+        func.sum(case((and_(Operation.type == "deposit", Operation.created_at >= recent_start), 1), else_=0)),
+        func.sum(case((and_(Operation.type == "deposit", Operation.created_at >= previous_start, Operation.created_at < recent_start), 1), else_=0)),
+    ).one()
 
-    recent_start = now - timedelta(days=15)
-    previous_start = now - timedelta(days=30)
-
-    def count(predicate, start, end):
-        return sum(1 for op in ops if predicate(op) and in_window(op, start, end))
-
-    def pack(label, total, predicate):
-        current = count(predicate, recent_start, now + timedelta(minutes=1))
-        previous = count(predicate, previous_start, recent_start)
-        return {"label": label, "value": total, "delta": _delta(current, previous)}
-
-    withdrawals = [op for op in ops if op.type == "withdrawal"]
-    deposits = [op for op in ops if op.type == "deposit"]
-    accepted_states = {"accepted", "payment_pending", "payment_confirmed", "cash_delivered", "completed"}
-    positives = [op for op in ops if op.status in accepted_states]
-    refused = [op for op in ops if op.status == "refused"]
-    rate = round(len(positives) / (len(positives) + len(refused)) * 100, 1) if positives or refused else 0
+    (
+        total,
+        withdrawals,
+        deposits,
+        pending,
+        refused,
+        completed,
+        positives,
+        recent_total,
+        prev_total,
+        recent_withdrawals,
+        prev_withdrawals,
+        recent_deposits,
+        prev_deposits,
+    ) = [int(value or 0) for value in row]
+    rate = round(positives / (positives + refused) * 100, 1) if positives or refused else 0
     return {
-        "users": pack("Utilisateurs", users, lambda op: True),
-        "active_pdr": {"label": "PDR actifs", "value": active_pdr, "delta": None},
-        "transactions": pack("Transactions", len(ops), lambda op: True),
-        "withdrawals": pack("Retraits", len(withdrawals), lambda op: op.type == "withdrawal"),
-        "deposits": pack("Dépôts", len(deposits), lambda op: op.type == "deposit"),
-        "pending": {"label": "Demandes en attente", "value": sum(1 for op in ops if op.status == "pending"), "delta": None},
-        "refused": {"label": "Demandes refusées", "value": len(refused), "delta": None},
-        "completed": {"label": "Transactions terminées", "value": sum(1 for op in ops if op.status == "completed"), "delta": None},
+        "users": {"label": "Utilisateurs", "value": int(users), "delta": None},
+        "active_pdr": {"label": "PDR actifs", "value": int(active_pdr), "delta": None},
+        "transactions": {"label": "Transactions", "value": total, "delta": _delta(recent_total, prev_total)},
+        "withdrawals": {"label": "Retraits", "value": withdrawals, "delta": _delta(recent_withdrawals, prev_withdrawals)},
+        "deposits": {"label": "Dépôts", "value": deposits, "delta": _delta(recent_deposits, prev_deposits)},
+        "pending": {"label": "Demandes en attente", "value": pending, "delta": None},
+        "refused": {"label": "Demandes refusées", "value": refused, "delta": None},
+        "completed": {"label": "Transactions terminées", "value": completed, "delta": None},
         "acceptance_rate": rate,
         "banner": settings_payload(db)["banner"],
     }
 
 
-def charts(db: Session) -> dict:
-    rate = float(settings_payload(db)["usd_cdf_rate"])
-    ops = db.query(Operation).all()
+def _parse_day(value: str | None, fallback):
+    if not value:
+        return fallback
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Date invalide (AAAA-MM-JJ).") from exc
+
+
+def charts(
+    db: Session,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    network: str | None = None,
+) -> dict:
+    cfg = settings_payload(db)
+    rate = float(cfg["usd_cdf_rate"])
     today = datetime.now(KINSHASA).date()
+    start = _parse_day(date_from, today - timedelta(days=29))
+    end = _parse_day(date_to, today)
+    if end < start:
+        raise HTTPException(status_code=400, detail="La date de fin doit être postérieure à la date de début.")
+    network_key = (network or "").strip().lower() or None
+    if network_key and network_key not in NETWORKS:
+        raise HTTPException(status_code=400, detail="Opérateur Mobile Money inconnu.")
+    span = (end - start).days
+    if span > 180:
+        raise HTTPException(status_code=400, detail="La période du graphique PDR est limitée à 180 jours.")
+
+    window_start = min(today - timedelta(days=29), start).isoformat()
+    ops = (
+        db.query(Operation)
+        .filter(Operation.created_at >= window_start)
+        .all()
+    )
+    by_day: dict[str, list[Operation]] = defaultdict(list)
+    for op in ops:
+        by_day[op.created_at[:10]].append(op)
+
     days = [(today - timedelta(days=offset)) for offset in range(29, -1, -1)]
     daily = []
     for day in days:
@@ -180,8 +196,8 @@ def charts(db: Session) -> dict:
             "CDF": {"withdrawals": 0.0, "deposits": 0.0},
             "USD": {"withdrawals": 0.0, "deposits": 0.0},
         }
-        for op in ops:
-            if op.created_at[:10] != key or op.currency not in totals:
+        for op in by_day.get(key, []):
+            if op.currency not in totals:
                 continue
             field = "withdrawals" if op.type == "withdrawal" else "deposits"
             totals[op.currency][field] += op.amount
@@ -193,25 +209,60 @@ def charts(db: Session) -> dict:
 
     operators: dict[str, int] = defaultdict(int)
     currencies: dict[str, int] = defaultdict(int)
+    ranking: dict[int, dict] = {}
+    accepted_states = {"accepted", "payment_pending", "payment_confirmed", "cash_delivered", "completed"}
+    positives = 0
+    refused = 0
     for op in ops:
         operators[op.network] += 1
         currencies[op.currency] += 1
+        if op.status in accepted_states:
+            positives += 1
+        elif op.status == "refused":
+            refused += 1
+        if op.status not in {"refused", "cancelled", "expired", "pending"}:
+            bucket = ranking.setdefault(op.pdr_id, {"pdr_id": op.pdr_id, "name": op.pdr_name, "count": 0})
+            bucket["count"] += 1
     operator_rows = [
         {"network": key, "label": network_label(key), "count": value}
         for key, value in sorted(operators.items(), key=lambda item: -item[1])
     ]
-    ranking: dict[int, dict] = {}
-    for op in ops:
-        if op.status in {"refused", "cancelled", "expired", "pending"}:
-            continue
-        bucket = ranking.setdefault(op.pdr_id, {"pdr_id": op.pdr_id, "name": op.pdr_name, "count": 0})
-        bucket["count"] += 1
     top = sorted(ranking.values(), key=lambda item: -item["count"])[:5]
-    accepted_states = {"accepted", "payment_pending", "payment_confirmed", "cash_delivered", "completed"}
-    positives = sum(1 for op in ops if op.status in accepted_states)
-    refused = sum(1 for op in ops if op.status == "refused")
+
+    pdr_days = [start + timedelta(days=offset) for offset in range(span + 1)]
+    pdr_daily = []
+    for day in pdr_days:
+        key = day.isoformat()
+        withdrawals = 0.0
+        deposits = 0.0
+        count = 0
+        for op in by_day.get(key, []):
+            if not op.pdr_id or not is_pdr_success(op):
+                continue
+            if network_key and op.network != network_key:
+                continue
+            amount = amount_cdf(op, rate)
+            if op.type == "withdrawal":
+                withdrawals += amount
+            else:
+                deposits += amount
+            count += 1
+        pdr_daily.append({
+            "date": key,
+            "withdrawals": round_money(withdrawals, "CDF"),
+            "deposits": round_money(deposits, "CDF"),
+            "total": round_money(withdrawals + deposits, "CDF"),
+            "count": count,
+        })
+
     return {
         "daily": daily,
+        "pdr_daily": pdr_daily,
+        "pdr_filters": {
+            "date_from": start.isoformat(),
+            "date_to": end.isoformat(),
+            "network": network_key,
+        },
         "operators": operator_rows,
         "currencies": [{"currency": key, "count": value} for key, value in currencies.items()],
         "acceptance": {"accepted": positives, "refused": refused},
@@ -220,47 +271,81 @@ def charts(db: Session) -> dict:
     }
 
 
-def reports(db: Session, date_from: str | None, date_to: str | None) -> dict:
-    rate = float(settings_payload(db)["usd_cdf_rate"])
-    ops = db.query(Operation).all()
-    selected = []
-    for op in ops:
-        if date_from and op.created_at[:10] < date_from:
-            continue
-        if date_to and op.created_at[:10] > date_to:
-            continue
-        selected.append(op)
+def reports(db: Session, date_from: str | None, date_to: str | None, network: str | None = None) -> dict:
+    cfg = settings_payload(db)
+    rate = float(cfg["usd_cdf_rate"])
+    network_key = (network or "").strip().lower() or None
+    if network_key and network_key not in NETWORKS:
+        raise HTTPException(status_code=400, detail="Opérateur Mobile Money inconnu.")
+    query = db.query(Operation)
+    if date_from:
+        query = query.filter(Operation.created_at >= date_from)
+    if date_to:
+        query = query.filter(Operation.created_at <= f"{date_to}T23:59:59.999999")
+    if network_key:
+        query = query.filter(Operation.network == network_key)
+    selected = query.all()
 
     def bucket(key_fn):
         grouped: dict[str, dict] = {}
         for op in selected:
-            key = key_fn(op)
-            row = grouped.setdefault(key, {"key": key, "count": 0, "usd": 0.0, "cdf": 0.0})
+            key = key_fn(op) or "—"
+            row = grouped.setdefault(key, {"key": key, "count": 0, "usd": 0.0, "cdf": 0.0, "cdf_equiv": 0.0})
             row["count"] += 1
+            cdf_equiv = amount_cdf(op, rate)
+            row["cdf_equiv"] += cdf_equiv
             if op.currency == "USD":
                 row["usd"] += op.amount
             else:
                 row["cdf"] += op.amount
-        return list(grouped.values())
+        rows = list(grouped.values())
+        for row in rows:
+            row["usd"] = round_money(row["usd"], "USD")
+            row["cdf"] = round_money(row["cdf"], "CDF")
+            row["cdf_equiv"] = round_money(row["cdf_equiv"], "CDF")
+        return sorted(rows, key=lambda item: -item["count"])
 
+    success = [op for op in selected if op.pdr_id and is_pdr_success(op)]
+    success_volume = round_money(sum(amount_cdf(op, rate) for op in success), "CDF")
+    cover_percent = float(cfg["fee_percent"])
     return {
         "count": len(selected),
         "by_type": bucket(lambda op: op.type),
         "by_network": bucket(lambda op: network_label(op.network)),
         "by_commune": bucket(lambda op: op.pdr_commune),
         "by_status": bucket(lambda op: op.status),
+        "by_pdr": bucket(lambda op: op.pdr_name or f"PDR #{op.pdr_id}"),
+        "by_client": bucket(lambda op: op.user_name or f"Client #{op.user_id}"),
+        "pdr_success": {
+            "count": len(success),
+            "volume_cdf": success_volume,
+            "cover_percent": cover_percent,
+            "cover_cdf": round_money(success_volume * (cover_percent / 100.0), "CDF"),
+        },
         "usd_cdf_rate": rate,
+        "network": network_key,
     }
 
 
 def list_users(db: Session) -> list[dict]:
+    from collections import defaultdict
+
+    from sqlalchemy import func
+
     users = db.query(User).order_by(User.created_at.desc()).all()
-    payload = []
-    for user in users:
-        numbers = db.query(PhoneNumber).filter(PhoneNumber.user_id == user.id).all()
-        count = db.query(Operation).filter(Operation.user_id == user.id).count()
-        payload.append(user_dict(user, numbers, count))
-    return payload
+    if not users:
+        return []
+    user_ids = [user.id for user in users]
+    numbers_by_user: dict[int, list] = defaultdict(list)
+    for phone in db.query(PhoneNumber).filter(PhoneNumber.user_id.in_(user_ids)).all():
+        numbers_by_user[phone.user_id].append(phone)
+    counts = dict(
+        db.query(Operation.user_id, func.count(Operation.id))
+        .filter(Operation.user_id.in_(user_ids))
+        .group_by(Operation.user_id)
+        .all()
+    )
+    return [user_dict(user, numbers_by_user.get(user.id, []), int(counts.get(user.id, 0))) for user in users]
 
 
 def _resolve_network(phone: str, network: str | None) -> str:

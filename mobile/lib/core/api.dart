@@ -13,6 +13,7 @@ class ApiClient {
   ApiClient({this.base = const String.fromEnvironment('API_BASE', defaultValue: 'http://127.0.0.1:8000')});
 
   final String base;
+  final http.Client _client = http.Client();
 
   Future<dynamic> send(String method, String path, {Object? body, String? token}) async {
     final uri = Uri.parse('$base$path');
@@ -22,11 +23,11 @@ class ApiClient {
     try {
       final encoded = body == null ? null : jsonEncode(body);
       final call = switch (method) {
-        'POST' => http.post(uri, headers: headers, body: encoded),
-        'PATCH' => http.patch(uri, headers: headers, body: encoded),
-        'PUT' => http.put(uri, headers: headers, body: encoded),
-        'DELETE' => http.delete(uri, headers: headers),
-        _ => http.get(uri, headers: headers),
+        'POST' => _client.post(uri, headers: headers, body: encoded),
+        'PATCH' => _client.patch(uri, headers: headers, body: encoded),
+        'PUT' => _client.put(uri, headers: headers, body: encoded),
+        'DELETE' => _client.delete(uri, headers: headers),
+        _ => _client.get(uri, headers: headers),
       };
       response = await call.timeout(const Duration(seconds: 25));
     } catch (_) {
@@ -51,4 +52,6 @@ class ApiClient {
     }
     return 'Erreur $code';
   }
+
+  void close() => _client.close();
 }

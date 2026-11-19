@@ -54,6 +54,12 @@ class MainActivity : FlutterActivity() {
                 }
                 "dismissIncomingCall" -> {
                     IncomingCallNotifier.dismiss(this)
+                    // L’écran ne doit rester allumé que pendant l’appel, pas après.
+                    clearIncomingCallWindow()
+                    result.success(true)
+                }
+                "clearIncomingCallWindow" -> {
+                    clearIncomingCallWindow()
                     result.success(true)
                 }
                 "bringToFront" -> {
@@ -129,6 +135,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun enableIncomingCallWindow() {
+        // Temporaire : uniquement pendant un appel entrant.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -141,6 +148,22 @@ class MainActivity : FlutterActivity() {
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun clearIncomingCallWindow() {
+        // Remet le comportement normal : le téléphone peut se mettre en veille.
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(false)
+            setTurnScreenOn(false)
+        } else {
+            @Suppress("DEPRECATION")
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD,
+            )
+        }
     }
 
     private fun dismissKeyguard() {

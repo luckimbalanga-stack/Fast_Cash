@@ -21,11 +21,27 @@ def list_operations(
     date_from: str | None = None,
     date_to: str | None = None,
     q: str | None = None,
+    limit: int | None = None,
+    include_timeline: bool = True,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     role, ident = require_roles(authorization, "user", "pdr", "admin")
-    return services.list_operations(db, role, ident, type, status, currency, pdr_id, user_id, date_from, date_to, q)
+    return services.list_operations(
+        db,
+        role,
+        ident,
+        type,
+        status,
+        currency,
+        pdr_id,
+        user_id,
+        date_from,
+        date_to,
+        q,
+        limit=limit,
+        include_timeline=include_timeline,
+    )
 
 
 @router.post("/operations")

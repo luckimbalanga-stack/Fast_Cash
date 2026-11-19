@@ -58,37 +58,7 @@ class PdrCallAlert {
   }
 
   static Map<String, dynamic> seedFromOperation(CashOperation operation, int waitSeconds) {
-    return {
-      'id': operation.id,
-      'reference': operation.reference,
-      'type': operation.type,
-      'user_id': operation.userId,
-      'user_name': operation.userName,
-      'pdr_id': operation.pdrId,
-      'pdr_name': operation.pdrName,
-      'pdr_address': operation.pdrAddress,
-      'pdr_commune': operation.pdrCommune,
-      'pdr_lat': operation.pdrLat,
-      'pdr_lng': operation.pdrLng,
-      'pdr_hours': operation.pdrHours,
-      'pdr_phone': operation.pdrPhone,
-      'phone': operation.phone,
-      'network': operation.network,
-      'network_label': operation.networkLabel,
-      'amount': operation.amount,
-      'currency': operation.currency,
-      'fees': operation.fees,
-      'total': operation.total,
-      'status': operation.status,
-      'token_code': operation.tokenCode,
-      'token_status': operation.tokenStatus,
-      'token_expires_at': operation.tokenExpiresAt,
-      'rating_stars': operation.ratingStars,
-      'rating_comment': operation.ratingComment,
-      'created_at': operation.createdAt,
-      'timeline': const <dynamic>[],
-      'wait': waitSeconds,
-    };
+    return {...operation.toJson(), 'timeline': const <dynamic>[], 'wait': waitSeconds};
   }
 
   /// Sonnerie native immédiate (appelable aussi depuis l’isolate watchdog).
@@ -149,8 +119,13 @@ class PdrCallAlert {
     _seedById = null;
     if (Platform.isAndroid) {
       try {
+        // Annule la notif + retire KEEP_SCREEN_ON (le téléphone peut se mettre en veille).
         await _channel.invokeMethod<void>('dismissIncomingCall');
-      } catch (_) {}
+      } catch (_) {
+        try {
+          await _channel.invokeMethod<void>('clearIncomingCallWindow');
+        } catch (_) {}
+      }
     }
   }
 

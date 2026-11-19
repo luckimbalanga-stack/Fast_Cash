@@ -170,17 +170,17 @@ object IncomingCallNotifier {
     }
 
     private fun wakeScreen(context: Context) {
+        // Réveil bref uniquement pour l’appel — ne bloque pas la veille ensuite.
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             @Suppress("DEPRECATION")
             val wl = pm.newWakeLock(
-                PowerManager.FULL_WAKE_LOCK or
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                     PowerManager.ACQUIRE_CAUSES_WAKEUP or
                     PowerManager.ON_AFTER_RELEASE,
                 "fastcash:incoming_call",
             )
-            wl.acquire(3000L)
-            wl.release()
+            wl.acquire(2500L)
         } catch (_: Exception) {
         }
     }

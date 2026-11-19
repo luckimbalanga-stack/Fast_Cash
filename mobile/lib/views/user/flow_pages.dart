@@ -241,14 +241,24 @@ class _BackgroundActionStripState extends State<BackgroundActionStrip> {
   int _visible = 0;
   Timer? _reveal;
 
-  List<String> get _labels => [
+  List<String> get _labels {
+    if (widget.type == 'deposit') {
+      return [
         'Demande envoyée au PDR',
         'Demande acceptée par le PDR',
-        'Saisir le code PIN',
-        widget.type == 'withdrawal' ? 'Retrait accepté' : 'Dépôt accepté',
+        'Dépôt réussi — ticket prêt',
       ];
+    }
+    return [
+      'Demande envoyée au PDR',
+      'Demande acceptée par le PDR',
+      'Saisir le code PIN',
+      'Retrait accepté',
+    ];
+  }
 
   int _targetCount(String? status) {
+    final maxSteps = _labels.length;
     switch (status) {
       case 'pin_required':
         return 3;
@@ -257,10 +267,10 @@ class _BackgroundActionStripState extends State<BackgroundActionStrip> {
       case 'payment_confirmed':
       case 'cash_delivered':
       case 'completed':
-        return 4;
+        return maxSteps;
       case 'refused':
       case 'cancelled':
-        return _visible.clamp(1, 4);
+        return _visible.clamp(1, maxSteps);
       default:
         return 1; // pending / null
     }
@@ -502,20 +512,12 @@ class _DispatchPageState extends State<DispatchPage> {
       _offerNext();
       return;
     }
-    if (operation.isWithdrawal && operation.status == 'payment_confirmed') {
+    if (operation.status == 'payment_confirmed') {
       _leaveTo(TokenPage(operation: operation));
       return;
     }
-    if (operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed')) {
+    if (operation.status == 'cash_delivered' || operation.status == 'completed') {
       _leaveTo(_ReceivedPage(operation: operation));
-      return;
-    }
-    if (!operation.isWithdrawal && operation.status == 'payment_confirmed') {
-      _leaveTo(DepositConfirmedPage(operation: operation));
-      return;
-    }
-    if (!operation.isWithdrawal && operation.status == 'accepted') {
-      _leaveTo(_StatusPage(operation: operation));
       return;
     }
     if (operation.status != 'pending') {
@@ -620,14 +622,10 @@ class _DispatchPageState extends State<DispatchPage> {
     if (!_leaving && operation != null) {
       // Laisse le temps à la chronologie d’afficher « Retrait/Dépôt accepté ».
       const hold = Duration(milliseconds: 1600);
-      if (operation.isWithdrawal && operation.status == 'payment_confirmed') {
+      if (operation.status == 'payment_confirmed') {
         _leaveTo(TokenPage(operation: operation), delay: hold);
-      } else if (operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed')) {
+      } else if (operation.status == 'cash_delivered' || operation.status == 'completed') {
         _leaveTo(_ReceivedPage(operation: operation), delay: hold);
-      } else if (!operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(DepositConfirmedPage(operation: operation), delay: hold);
-      } else if (!operation.isWithdrawal && operation.status == 'accepted') {
-        _leaveTo(_StatusPage(operation: operation), delay: hold);
       }
     }
     final waitingPin = operation?.status == 'pin_required';
@@ -881,12 +879,10 @@ class _FollowPageState extends State<FollowPage> {
     }
     if (!_leaving) {
       const hold = Duration(milliseconds: 1600);
-      if (operation.isWithdrawal && operation.status == 'payment_confirmed') {
+      if (operation.status == 'payment_confirmed') {
         _leaveTo(TokenPage(operation: operation), delay: hold);
-      } else if (operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed')) {
+      } else if (operation.status == 'cash_delivered' || operation.status == 'completed') {
         _leaveTo(_ReceivedPage(operation: operation), delay: hold);
-      } else if (!operation.isWithdrawal && operation.status == 'payment_confirmed') {
-        _leaveTo(DepositConfirmedPage(operation: operation), delay: hold);
       }
     }
     // Pendant le délai, on garde le suivi visible pour voir la chronologie s’allonger.
@@ -903,7 +899,6 @@ class _StatusPage extends StatelessWidget {
     final refused = operation.status == 'refused';
     final waiting = operation.status == 'pending';
     final needsPin = operation.status == 'pin_required';
-    final depositGo = !operation.isWithdrawal && operation.status == 'accepted';
     return Scaffold(
       appBar: AppBar(title: Text(operation.reference)),
       body: ListView(
@@ -936,14 +931,8 @@ class _StatusPage extends StatelessWidget {
               icon: Icons.lock_outline_rounded,
               onPressed: () => showPinDialog(context, operation),
             ),
-          if (depositGo)
-              GhostButton(
-              label: 'Itinéraire',
-              icon: Icons.near_me_outlined,
-              onPressed: () => openRoute(context, operation),
-            ),
           if (refused) _Alternatives(operation: operation),
-          if (waiting || needsPin || depositGo)
+          if (waiting || needsPin)
             TextButton(
               onPressed: () => runAction(context, () async {
                 await context.read<AppController>().postAction(operation.id, 'cancel');
@@ -962,7 +951,7 @@ class _StatusPage extends StatelessWidget {
       'refused' => 'Demande refusée',
       'pin_required' => 'Code PIN requis',
       'accepted' => 'Rendez-vous au point de retrait',
-      'payment_confirmed' => 'Paiement confirmé',
+      'payment_confirmed' => operation.isWithdrawal ? 'Paiement confirmé' : 'Dépôt réussi',
       'cash_delivered' => 'Retrait effectué',
       'cancelled' => 'Demande annulée',
       'completed' => operation.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué',
@@ -974,14 +963,18 @@ class _StatusPage extends StatelessWidget {
     if (operation.status == 'pending') return 'La demande a été envoyée au ${operation.pdrName}. Cette page se met à jour dès que le vendeur répond.';
     if (operation.status == 'refused') return 'Le point sélectionné ne peut pas traiter cette demande. Choisissez un autre point de retrait.';
     if (operation.status == 'pin_required') return '${operation.pdrName} a accepté. Autorisez l’opération avec votre code PIN Mobile Money.';
-    if (operation.status == 'payment_confirmed') return 'Le paiement est confirmé. Présentez votre code QR au point de retrait.';
+    if (operation.status == 'payment_confirmed') {
+      return operation.isWithdrawal
+          ? 'Le paiement est confirmé. Présentez votre code QR au point de retrait.'
+          : 'Votre dépôt est accepté. Présentez le ticket QR au ${operation.pdrName} pour finaliser.';
+    }
     if (operation.status == 'cash_delivered' || (operation.isWithdrawal && operation.status == 'completed')) {
       return 'Retrait effectué au ${operation.pdrName}. Vous pouvez noter le point.';
     }
     if (!operation.isWithdrawal && operation.status == 'completed') {
       return 'Dépôt effectué au ${operation.pdrName}.';
     }
-    if (operation.status == 'accepted') return 'Remettez ${formatMoney(operation.amount, operation.currency)} en espèces au ${operation.pdrName}. Le vendeur confirmera la réception.';
+    if (operation.status == 'cancelled') return 'Cette demande a été annulée.';
     return 'Statut : ${statusLabel(operation.status, type: operation.type)}.';
   }
 }
@@ -1075,22 +1068,34 @@ class TokenPage extends StatelessWidget {
           children: [
             const Center(child: _SuccessBadge()),
             const SizedBox(height: 16),
-            const Text.rich(
+            Text.rich(
               TextSpan(children: [
-                TextSpan(text: 'Retrait prêt\n', style: TextStyle(color: AppColors.night)),
-                TextSpan(text: 'à présenter', style: TextStyle(color: AppColors.brand)),
+                TextSpan(
+                  text: live.isWithdrawal ? 'Retrait prêt\n' : 'Dépôt réussi\n',
+                  style: const TextStyle(color: AppColors.night),
+                ),
+                TextSpan(
+                  text: live.isWithdrawal ? 'à présenter' : 'ticket à présenter',
+                  style: const TextStyle(color: AppColors.brand),
+                ),
               ]),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, height: 1.1),
+              style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, height: 1.1),
             ),
             const SizedBox(height: 8),
-            const Text('Présentez ce code QR au point de retrait\npour récupérer votre argent.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, height: 1.35)),
+            Text(
+              live.isWithdrawal
+                  ? 'Présentez ce code QR au point de retrait\npour récupérer votre argent.'
+                  : 'Présentez ce ticket QR au point de retrait\npour finaliser votre dépôt.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.muted, height: 1.35),
+            ),
             const SizedBox(height: 16),
             SoftCard(
               child: Column(children: [
                 _TokenQr(data: live.tokenCode ?? live.reference),
                 const SizedBox(height: 8),
-                const Text('Code de retrait', style: TextStyle(color: AppColors.muted)),
+                Text(live.isWithdrawal ? 'Code de retrait' : 'Code de dépôt', style: const TextStyle(color: AppColors.muted)),
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   Text(live.tokenCode ?? '', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: 1)),
                   IconButton(onPressed: () => Clipboard.setData(ClipboardData(text: live.tokenCode ?? '')), icon: const Icon(Icons.copy_rounded, color: AppColors.brand)),
@@ -1102,7 +1107,7 @@ class TokenPage extends StatelessWidget {
               Expanded(child: SoftCard(padding: const EdgeInsets.all(12), child: Column(children: [
                 const Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand),
                 const SizedBox(height: 4),
-                const Text('Montant à retirer', style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                Text(live.isWithdrawal ? 'Montant à retirer' : 'Montant à déposer', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
                 Text(formatMoney(live.amount, live.currency), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
               ]))),
               const SizedBox(width: 8),
@@ -1218,6 +1223,10 @@ class _ReceivedPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = operation.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué';
+    final body = operation.isWithdrawal
+        ? '${formatMoney(operation.amount, operation.currency)} ont été remis au ${operation.pdrName}.'
+        : '${formatMoney(operation.amount, operation.currency)} ont été déposés au ${operation.pdrName}.';
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => goAppHome(context)),
@@ -1231,9 +1240,9 @@ class _ReceivedPage extends StatelessWidget {
             const Spacer(),
             const Icon(Icons.check_circle, color: AppColors.mint, size: 72),
             const SizedBox(height: 12),
-            const Text('Retrait effectué', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
             const SizedBox(height: 8),
-            Text('${formatMoney(operation.amount, operation.currency)} ont été remis au ${operation.pdrName}.', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted, height: 1.4)),
+            Text(body, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted, height: 1.4)),
             const Spacer(),
             PrimaryButton(label: 'Noter le point', icon: Icons.star_rounded, onPressed: () => showRatingDialog(context, operation)),
             const SizedBox(height: 12),

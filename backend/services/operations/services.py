@@ -81,40 +81,24 @@ def _close_pending_offer(db: Session, op: Operation, label: str) -> bool:
 
 def cancel_pending_for_pdr(db: Session, pdr_id: int, label: str = "Point de retrait indisponible") -> int:
     """Annule toutes les offres en attente d’un PDR (fermeture / déconnexion)."""
-    rows = (
-        db.query(Operation)
-        .filter(Operation.pdr_id == pdr_id, Operation.status == "pending")
-        .all()
-    )
-    closed = 0
-    for op in rows:
-        if _close_pending_offer(db, op, label):
-            closed += 1
-            notify(
-                "user",
-                op.user_id,
-                "Point indisponible",
-                f"{op.pdr_name} n’est plus disponible. La demande passe au point suivant.",
-                op.id,
-            )
-    return closed
+    from shared.pending_ops import cancel_pending_for_pdr as _cancel_pending
+
+    return _cancel_pending(db, pdr_id, label)
 
 
 def expire_stale_pending(db: Session, *, user_id: int | None = None, pdr_id: int | None = None) -> int:
-    """Expire en lot les offres pending hors délai (une lecture settings)."""
+    """Expire en lot les offres pending hors délai (filtre SQL sur created_at)."""
     offer_seconds = _offer_seconds(db)
-    now = datetime.now(KINSHASA)
-    query = db.query(Operation).filter(Operation.status == "pending")
+    cutoff = (datetime.now(KINSHASA) - timedelta(seconds=offer_seconds)).replace(microsecond=0).isoformat()
+    query = db.query(Operation).filter(Operation.status == "pending", Operation.created_at <= cutoff)
     if user_id is not None:
         query = query.filter(Operation.user_id == user_id)
     if pdr_id is not None:
         query = query.filter(Operation.pdr_id == pdr_id)
     closed = 0
     for op in query.all():
-        deadline = _offer_deadline_at(op.created_at, offer_seconds)
-        if deadline is not None and now >= deadline:
-            if _close_pending_offer(db, op, "Délai d’offre écoulé — passage au point suivant"):
-                closed += 1
+        if _close_pending_offer(db, op, "Délai d’offre écoulé — passage au point suivant"):
+            closed += 1
     return closed
 
 
@@ -191,14 +175,19 @@ def list_operations(
     date_from: str | None,
     date_to: str | None,
     query: str | None,
+    *,
+    limit: int | None = None,
+    include_timeline: bool = True,
 ) -> list[dict]:
     # Expire d’abord le périmètre visible (évite N lectures settings).
     if role == "user":
         expire_stale_pending(db, user_id=ident)
     elif role == "pdr":
         expire_stale_pending(db, pdr_id=ident)
-    else:
+    elif role == "admin" and status == "pending":
         expire_stale_pending(db)
+
+    from sqlalchemy import or_
 
     q = db.query(Operation)
     if role == "user":
@@ -222,19 +211,24 @@ def list_operations(
         q = q.filter(Operation.created_at <= f"{date_to}T23:59:59")
 
     needle = (query or "").strip().lower()
-    rows = q.order_by(Operation.created_at.desc()).limit(LIST_OPERATIONS_LIMIT * 3 if needle else LIST_OPERATIONS_LIMIT).all()
     if needle:
-        filtered = []
-        for op in rows:
-            hay = " ".join([op.reference, op.user_name, op.pdr_name, op.phone, op.token_code or ""]).lower()
-            if needle in hay:
-                filtered.append(op)
-            if len(filtered) >= LIST_OPERATIONS_LIMIT:
-                break
-        rows = filtered
+        pattern = f"%{needle}%"
+        q = q.filter(
+            or_(
+                Operation.reference.ilike(pattern),
+                Operation.user_name.ilike(pattern),
+                Operation.pdr_name.ilike(pattern),
+                Operation.phone.ilike(pattern),
+                Operation.token_code.ilike(pattern),
+            )
+        )
+    cap = max(1, min(int(limit or LIST_OPERATIONS_LIMIT), LIST_OPERATIONS_LIMIT))
+    rows = q.order_by(Operation.created_at.desc()).limit(cap).all()
 
-    timelines = _prefetch_timelines(db, [op.id for op in rows])
-    return [operation_dict(op, timelines.get(op.id, [])) for op in rows]
+    if include_timeline:
+        timelines = _prefetch_timelines(db, [op.id for op in rows])
+        return [operation_dict(op, timelines.get(op.id, [])) for op in rows]
+    return [operation_dict(op, []) for op in rows]
 
 
 def create_operation(db: Session, user_id: int, data: dict) -> dict:
@@ -262,9 +256,9 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
     pdr = db.get(Pdr, data["pdr_id"])
     if not pdr or pdr.status != "active":
         raise HTTPException(status_code=404, detail="Point de retrait indisponible.")
-    from services.pdr.services import is_match
+    from shared.pdr_rules import pdr_can_handle
 
-    if not is_match(pdr, kind, currency, amount, number.network):
+    if not pdr_can_handle(pdr, kind, currency, amount, number.network):
         raise HTTPException(status_code=409, detail="Ce PDR ne peut pas traiter cette opération pour le moment.")
     # Chaînage : clôturer les offres pending précédentes du même utilisateur
     # pour qu’un PDR déjà sauté ne puisse plus accepter.
@@ -321,7 +315,7 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
         f"{user.name} demande {verb} de {amount:g} {currency} · {number.phone}. Validez ou refusez sous {offer_seconds} s.",
         op.id,
     )
-    notify("user", user.id, "Demande envoyée", f"Votre demande {op.reference} est en attente du point de retrait.", op.id)
+    # Utilisateur : pas de notif à l’envoi — seulement accepté / refusé / terminé.
     return present(db, op)
 
 
@@ -333,13 +327,33 @@ def accept(db: Session, pdr_id: int, operation_id: int) -> dict:
     if op.type == "withdrawal":
         _liquidity(f"/pdr/{op.pdr_id}/liquidity/reserve", op)
         op.reserved = True
-    _touch(db, op, "pin_required", "Demande acceptée, code PIN requis")
-    verb = "retrait" if op.type == "withdrawal" else "dépôt"
+        _touch(db, op, "pin_required", "Demande acceptée, code PIN requis")
+        notify(
+            "user",
+            op.user_id,
+            "Demande acceptée",
+            f"{op.pdr_name} a accepté votre retrait. Saisissez votre code PIN Mobile Money pour autoriser l'opération.",
+            op.id,
+        )
+        return present(db, op)
+
+    # Dépôt : acceptation = ticket immédiat (pas de PIN), client notifié succès.
+    op.token_code = op.reference
+    op.token_status = "active"
+    op.token_expires_at = None
+    _touch(db, op, "payment_confirmed", "Dépôt accepté — ticket prêt")
     notify(
         "user",
         op.user_id,
-        "Demande acceptée",
-        f"{op.pdr_name} a accepté votre {verb}. Saisissez votre code PIN Mobile Money pour autoriser l'opération.",
+        "Dépôt réussi",
+        f"{op.pdr_name} a accepté votre dépôt. Présentez le ticket {op.token_code} au point pour finaliser.",
+        op.id,
+    )
+    notify(
+        "pdr",
+        op.pdr_id,
+        "Dépôt accepté",
+        f"Ticket {op.token_code} prêt à scanner pour {op.user_name}.",
         op.id,
     )
     return present(db, op)
@@ -351,7 +365,13 @@ def refuse(db: Session, pdr_id: int, operation_id: int) -> dict:
     if op.status != "pending":
         raise HTTPException(status_code=409, detail="Cette demande n'est plus en attente.")
     _touch(db, op, "refused", "Demande refusée par le PDR")
-    notify("user", op.user_id, "Demande refusée", f"{op.pdr_name} ne peut pas traiter {op.reference}. Choisissez un autre point.", op.id)
+    notify(
+        "user",
+        op.user_id,
+        "Demande refusée",
+        f"Votre demande {op.reference} a été refusée. Vous pouvez en relancer une vers un autre point disponible.",
+        op.id,
+    )
     return present(db, op)
 
 
@@ -389,25 +409,21 @@ def authorize(db: Session, user_id: int, operation_id: int, pin: str) -> dict:
         op.token_expires_at = None
         _touch(db, op, "payment_confirmed", "Paiement confirmé")
         notify("pdr", op.pdr_id, "Paiement confirmé", f"Le jeton {op.token_code} est prêt à être scanné.", op.id)
-        notify("user", op.user_id, "Paiement confirmé", f"Présentez le code QR {op.token_code} au {op.pdr_name}. Le jeton reste valide jusqu’au scan.", op.id)
+        # Utilisateur : pas de notif intermédiaire (PIN / QR) — seulement accepté / refusé / terminé.
     else:
         _touch(db, op, "accepted", "Code PIN confirmé, remise des espèces en attente")
-        notify("user", op.user_id, "Rendez-vous au point de retrait", f"Remettez les espèces au {op.pdr_name}. Le transfert sera clôturé après confirmation.", op.id)
         notify("pdr", op.pdr_id, "Client autorisé", f"{op.user_name} a autorisé le dépôt {op.reference}.", op.id)
     return present(db, op)
 
 
 def confirm_cash(db: Session, pdr_id: int, operation_id: int) -> dict:
+    """Ancien flux dépôt (confirm espèces) — remplacé par scan du ticket."""
     op = get_operation(db, operation_id)
     _visible(op, "pdr", pdr_id)
-    if op.type != "deposit" or op.status != "accepted":
-        raise HTTPException(status_code=409, detail="La réception des espèces n'est pas attendue pour cette opération.")
-    _liquidity(f"/pdr/{op.pdr_id}/liquidity/receive", op)
-    op.mm_status = "session_closed"
-    _touch(db, op, "payment_confirmed", "Espèces reçues, session Mobile Money clôturée")
-    notify("user", op.user_id, "Dépôt confirmé", f"La session de transfert vers {op.phone} est clôturée.", op.id)
-    notify("pdr", op.pdr_id, "Dépôt confirmé", f"Le dépôt {op.reference} est clôturé.", op.id)
-    return present(db, op)
+    raise HTTPException(
+        status_code=409,
+        detail="Pour finaliser un dépôt, scannez ou saisissez le ticket du client.",
+    )
 
 
 def simulate_transfer(db: Session, role: str, ident: int, operation_id: int) -> dict:
@@ -434,8 +450,8 @@ def cancel(db: Session, role: str, ident: int, operation_id: int) -> dict:
     label = "Délai d’offre écoulé — passage au point suivant" if was_offer else "Opération annulée"
     _touch(db, op, "cancelled", label)
     # Offre pending : pas de notif (le chaînage mobile passe au PDR suivant).
+    # Utilisateur : pas de notif d’annulation — seulement accepté / refusé / terminé.
     if not was_offer:
-        notify("user", op.user_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
         notify("pdr", op.pdr_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
     return present(db, op)
 
@@ -452,23 +468,49 @@ def lookup_token(db: Session, pdr_id: int, code: str) -> dict:
             detail="Ce ticket ne peut être validé que chez le point de retrait qui a accepté la demande.",
         )
     payload = present(db, op)
-    payload["redeemable"] = op.type == "withdrawal" and op.status == "payment_confirmed" and op.token_status == "active"
+    payload["redeemable"] = (
+        op.type in {"withdrawal", "deposit"}
+        and op.status == "payment_confirmed"
+        and op.token_status == "active"
+    )
     if op.token_status == "used" or op.status == "completed":
         payload["error"] = "Ce jeton a déjà été utilisé."
     elif op.token_status == "cancelled" or op.status == "cancelled":
         payload["error"] = "Ce jeton a été annulé."
     elif not payload["redeemable"]:
-        payload["error"] = "Ce jeton n'est pas valide pour une remise d'espèces."
+        payload["error"] = "Ce jeton n'est pas valide pour cette opération."
     return payload
 
 
 def redeem(db: Session, pdr_id: int, code: str) -> dict:
     preview = lookup_token(db, pdr_id, code)
-    if not preview["redeemable"]:
-        raise HTTPException(status_code=409, detail=preview.get("error") or "Jeton invalide.")
     op = get_operation(db, preview["id"])
-    _liquidity(f"/pdr/{op.pdr_id}/liquidity/consume", op)
-    op.reserved = False
+    if not preview["redeemable"]:
+        # Dépôt dont le ticket ne passe pas → statut annulé.
+        if (
+            op.type == "deposit"
+            and op.pdr_id == pdr_id
+            and op.status == "payment_confirmed"
+            and op.token_status in {None, "active", "expired"}
+        ):
+            op.token_status = "cancelled"
+            _touch(db, op, "cancelled", "Ticket non validé — dépôt annulé")
+            notify(
+                "user",
+                op.user_id,
+                "Dépôt annulé",
+                f"Le ticket {op.reference} n’a pas pu être validé au {op.pdr_name}.",
+                op.id,
+            )
+            notify("pdr", op.pdr_id, "Dépôt annulé", f"Ticket {op.reference} invalide — opération annulée.", op.id)
+            raise HTTPException(status_code=409, detail="Ticket non validé — dépôt annulé.")
+        raise HTTPException(status_code=409, detail=preview.get("error") or "Jeton invalide.")
+
+    if op.type == "withdrawal":
+        _liquidity(f"/pdr/{op.pdr_id}/liquidity/consume", op)
+        op.reserved = False
+    else:
+        _liquidity(f"/pdr/{op.pdr_id}/liquidity/receive", op)
     op.token_status = "used"
     op.token_expires_at = None
     op.mm_status = "session_closed"
@@ -476,15 +518,17 @@ def redeem(db: Session, pdr_id: int, code: str) -> dict:
     _touch(db, op, "completed", done)
     notify("user", op.user_id, done, f"{done} au {op.pdr_name}. Vous pouvez noter le point de retrait.", op.id)
     notify("pdr", op.pdr_id, done, f"{done} · {op.reference}.", op.id)
+    try:
+        internal_post(PDR_URL, f"/pdr/{op.pdr_id}/liquidity/check", {})
+    except HTTPException:
+        pass
     return present(db, op)
 
 
 def rate(db: Session, user_id: int, operation_id: int, stars: int, comment: str) -> dict:
     op = get_operation(db, operation_id)
     _visible(op, "user", user_id)
-    allowed = (op.type == "withdrawal" and op.status in {"cash_delivered", "completed"}) or (
-        op.type == "deposit" and op.status in {"payment_confirmed", "completed"}
-    )
+    allowed = op.status in {"cash_delivered", "completed"}
     if not allowed:
         raise HTTPException(status_code=409, detail="L'évaluation sera disponible à la fin de l'opération.")
     if stars < 1 or stars > 5:

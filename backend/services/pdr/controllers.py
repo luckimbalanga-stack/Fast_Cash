@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from services.pdr import services
-from services.pdr.views import AvailabilityWrite, LiquidityMove, PdrPasswordReset, PdrPatch, PdrWrite, RatingWrite
+from services.pdr.views import (
+    AvailabilityWrite,
+    LiquidityMove,
+    LiquidityRecharge,
+    PdrPasswordReset,
+    PdrPatch,
+    PdrWrite,
+    RatingWrite,
+)
 from shared.db import get_db
 from shared.utils import INTERNAL_KEY, parse_bearer, require_roles
 
@@ -148,3 +156,24 @@ def consume(pdr_id: int, body: LiquidityMove, x_internal_key: str | None = Heade
 def receive(pdr_id: int, body: LiquidityMove, x_internal_key: str | None = Header(default=None), db: Session = Depends(get_db)):
     _internal(x_internal_key)
     return services.receive(db, pdr_id, body.currency, body.amount)
+
+
+@router.post("/pdr/{pdr_id}/liquidity/recharge")
+def recharge(
+    pdr_id: int,
+    body: LiquidityRecharge,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _owner_or_admin(authorization, pdr_id)
+    return services.simulate_recharge(db, pdr_id, body.network, body.amount, body.pin)
+
+
+@router.post("/pdr/{pdr_id}/liquidity/check")
+def check_liquidity(
+    pdr_id: int,
+    x_internal_key: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _internal(x_internal_key)
+    return services.check_liquidity_policy(db, pdr_id)

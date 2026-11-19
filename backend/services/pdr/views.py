@@ -57,6 +57,12 @@ class LiquidityMove(BaseModel):
     amount: float
 
 
+class LiquidityRecharge(BaseModel):
+    network: str
+    amount: float = Field(gt=0)
+    pin: str = Field(min_length=4, max_length=6)
+
+
 class RatingWrite(BaseModel):
     user_id: int
     user_name: str

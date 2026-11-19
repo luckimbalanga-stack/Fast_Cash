@@ -1,4 +1,4 @@
-"""Fabrique d'application et appels internes."""
+"""Fabrique d'application et appels internes (client HTTP réutilisé)."""
 
 import os
 
@@ -10,6 +10,8 @@ from shared.utils import INTERNAL_KEY
 
 PDR_URL = os.getenv("PDR_URL", "http://127.0.0.1:8002")
 NOTIF_URL = os.getenv("NOTIF_URL", "http://127.0.0.1:8004")
+
+_http = httpx.Client(timeout=8.0, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
 
 
 def create_app(service_name: str, lifespan=None) -> FastAPI:
@@ -32,7 +34,7 @@ def create_app(service_name: str, lifespan=None) -> FastAPI:
 
 def internal_post(base: str, path: str, payload: dict) -> dict:
     try:
-        response = httpx.post(
+        response = _http.post(
             f"{base}{path}",
             json=payload,
             headers={"X-Internal-Key": INTERNAL_KEY},
@@ -52,7 +54,7 @@ def internal_post(base: str, path: str, payload: dict) -> dict:
 
 def notify(audience: str, target_id: int, title: str, body: str, operation_id: int | None = None) -> None:
     try:
-        httpx.post(
+        _http.post(
             f"{NOTIF_URL}/notifications",
             json={
                 "audience": audience,

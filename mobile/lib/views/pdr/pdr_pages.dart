@@ -9,6 +9,7 @@ import '../../core/api.dart';
 import '../../core/format.dart';
 import '../../models/models.dart';
 import '../../services/pdr_call_alert.dart';
+import '../../services/token_redeem.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/widgets.dart';
 import 'incoming_call.dart';
@@ -71,13 +72,10 @@ class PdrHomePage extends StatelessWidget {
     final controller = context.watch<AppController>();
     final pdr = controller.pdr;
     if (pdr == null) return const SizedBox.shrink();
-    final today = controller.operations.where((operation) {
-      final date = DateTime.parse(operation.createdAt).toLocal();
-      final now = DateTime.now();
-      return date.year == now.year && date.month == now.month && date.day == now.day;
-    }).length;
-    final accepted = controller.operations.where(_isAcceptedRequest).length;
-    final completed = controller.operations.where(_isCompletedRequest).length;
+    final recent = controller.operations.where(_isWithinLast24Hours);
+    final today = recent.length;
+    final accepted = recent.where(_isAcceptedRequest).length;
+    final completed = recent.where(_isCompletedRequest).length;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       children: [
@@ -86,14 +84,13 @@ class PdrHomePage extends StatelessWidget {
           const Spacer(),
           Tooltip(
             message: !pdr.hasAvailableLiquidity
-                ? 'Liquidités à 0 : statut verrouillé fermé'
+                ? 'Liquidité ≤ seuil de couverture : statut verrouillé fermé'
                 : (pdr.isOpen ? 'Ouvert — touchez pour fermer' : 'Fermé — touchez pour ouvrir'),
             child: Switch(
               value: pdr.hasAvailableLiquidity && pdr.isOpen,
               thumbColor: const WidgetStatePropertyAll(Colors.white),
               trackColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? AppColors.brand : AppColors.danger),
               trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
-              // Ouvrir/fermer seulement s’il reste du disponible.
               onChanged: !pdr.hasAvailableLiquidity
                   ? null
                   : (value) => runAction(context, () => controller.updateAvailability({'is_open': value})),
@@ -115,7 +112,7 @@ class PdrHomePage extends StatelessWidget {
               const SizedBox(height: 4),
               Text(pdr.isOpen ? 'En service' : 'Indisponible', style: TextStyle(color: pdr.isOpen ? AppColors.mint : AppColors.danger, fontWeight: FontWeight.w700)),
               if (!pdr.hasAvailableLiquidity)
-                const Text('Liquidités à 0 — statut verrouillé fermé', style: TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600)),
+                const Text('Liquidité insuffisante — statut verrouillé fermé', style: TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600)),
               Text('${pdr.address}, ${pdr.commune}', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
               Text('★ ${pdr.ratingAvg.toStringAsFixed(1)} · ${pdr.ratingCount} avis', style: const TextStyle(fontSize: 12)),
             ])),
@@ -123,11 +120,11 @@ class PdrHomePage extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Row(children: [
-          _Stat(value: '$accepted', label: 'Acceptées', color: const Color(0xFFE8F1FF)),
+          _Stat(value: '$accepted', label: 'Acceptées\n(24 h)', color: const Color(0xFFE8F1FF)),
           const SizedBox(width: 8),
-          _Stat(value: '$completed', label: 'Terminées', color: AppColors.mintSoft),
+          _Stat(value: '$completed', label: 'Terminées\n(24 h)', color: AppColors.mintSoft),
           const SizedBox(width: 8),
-          _Stat(value: '$today', label: 'Aujourd’hui', color: AppColors.brandSoft),
+          _Stat(value: '$today', label: 'Total\n(24 h)', color: AppColors.brandSoft),
         ]),
         const SizedBox(height: 8),
         SoftCard(
@@ -135,8 +132,7 @@ class PdrHomePage extends StatelessWidget {
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('Liquidités disponibles', style: TextStyle(fontWeight: FontWeight.w700)),
-            Text(formatMoney(pdr.usdAvailable, 'USD'), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-            Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           ]),
         ),
         const SizedBox(height: 8),
@@ -149,7 +145,7 @@ class PdrHomePage extends StatelessWidget {
           child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.check_circle_outline, color: AppColors.brand), title: const Text('Demandes terminées'), subtitle: Text(completed == 0 ? 'Aucune opération clôturée' : '$completed opération${completed > 1 ? 's' : ''} clôturée${completed > 1 ? 's' : ''}'), trailing: const Icon(Icons.chevron_right)),
         ),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrScanPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.qr_code_scanner, color: AppColors.brand), title: Text('Vérifier un jeton'), subtitle: Text('Uniquement pour les demandes que vous avez acceptées'), trailing: Icon(Icons.chevron_right))),
-        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Solde disponible USD et CDF'), trailing: Icon(Icons.chevron_right))),
+        SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LiquidityPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.account_balance_wallet_outlined, color: AppColors.brand), title: Text('Mes liquidités'), subtitle: Text('Solde disponible CDF'), trailing: Icon(Icons.chevron_right))),
         SoftCard(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RatingsPage())), child: const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.star_outline, color: AppColors.brand), title: Text('Évaluations reçues'), trailing: Icon(Icons.chevron_right))),
       ],
     );
@@ -208,7 +204,18 @@ class _Stat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(child: SoftCard(color: color, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)), Text(label, style: const TextStyle(fontSize: 12))])));
+    return Expanded(
+      child: SoftCard(
+        color: color,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
+            Text(label, style: const TextStyle(fontSize: 12, height: 1.2)),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -216,11 +223,17 @@ bool _isAcceptedRequest(CashOperation operation) => const {
       'pin_required',
       'accepted',
       'payment_pending',
-      'payment_confirmed',
+      'payment_confirmed', // ticket prêt (retrait après PIN / dépôt dès acceptation)
       'cash_delivered',
     }.contains(operation.status);
 
 bool _isCompletedRequest(CashOperation operation) => operation.status == 'completed';
+
+bool _isWithinLast24Hours(CashOperation operation) {
+  final date = DateTime.tryParse(operation.createdAt)?.toLocal();
+  if (date == null) return false;
+  return DateTime.now().difference(date) <= const Duration(hours: 24);
+}
 
 class PdrRequestsPage extends StatelessWidget {
   const PdrRequestsPage({super.key, this.initialTab = 0});
@@ -355,10 +368,11 @@ class PdrRequestPage extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 16),
-          if (!operation.isWithdrawal && operation.status == 'accepted')
-            PrimaryButton(label: 'Confirmer la réception des espèces', onPressed: () => runAction(context, () => context.read<AppController>().postAction(operation.id, 'confirm-cash'))),
-          if (operation.isWithdrawal && operation.tokenCode != null && operation.status == 'payment_confirmed')
-            PrimaryButton(label: 'Vérifier le jeton', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PdrScanPage(initialCode: operation.tokenCode)))),
+          if (operation.tokenCode != null && operation.status == 'payment_confirmed')
+            PrimaryButton(
+              label: operation.isWithdrawal ? 'Vérifier le jeton' : 'Scanner / saisir le ticket',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PdrManualTokenPage(initialCode: operation.tokenCode))),
+            ),
         ],
       ),
     );
@@ -379,174 +393,99 @@ class PdrScanPage extends StatefulWidget {
 }
 
 class _PdrScanPageState extends State<PdrScanPage> {
-  late final TextEditingController code = TextEditingController(text: widget.initialCode ?? '');
   final MobileScannerController camera = MobileScannerController(detectionSpeed: DetectionSpeed.normal, facing: CameraFacing.back);
-  CashOperation? result;
-  String? errorMessage;
-  bool manual = false;
   bool _busy = false;
   String? _lastScanned;
+  String? _lastCode;
 
   @override
   void initState() {
     super.initState();
     final initial = widget.initialCode?.trim();
     if (initial != null && initial.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _processCode(initial));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => PdrManualTokenPage(initialCode: initial)));
+      });
     }
   }
 
   @override
   void dispose() {
     camera.dispose();
-    code.dispose();
     super.dispose();
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (manual || _busy) return;
+    if (_busy) return;
     final value = capture.barcodes
         .map((item) => item.rawValue?.trim())
         .whereType<String>()
         .firstWhere((item) => item.isNotEmpty, orElse: () => '');
     if (value.isEmpty || value == _lastScanned) return;
-    await _processCode(value);
+    await _processScan(value);
   }
 
-  Future<void> _processCode(String raw) async {
+  Future<void> _processScan(String raw) async {
     if (_busy) return;
     final normalized = raw.trim().toUpperCase();
     if (normalized.isEmpty) return;
-    _busy = true;
-    _lastScanned = normalized;
     setState(() {
-      code.text = normalized;
-      result = null;
-      errorMessage = null;
+      _busy = true;
+      _lastScanned = normalized;
+      _lastCode = normalized;
     });
-    final messenger = ScaffoldMessenger.of(context);
-    final controller = context.read<AppController>();
     try {
-      final preview = await controller.lookupToken(normalized);
+      await camera.stop();
       if (!mounted) return;
-      if (preview['redeemable'] != true) {
-        final message = preview['error']?.toString() ?? 'Ce jeton ne peut pas être validé.';
-        setState(() {
-          errorMessage = message;
-          result = CashOperation.fromJson(preview);
-        });
-        messenger.showSnackBar(SnackBar(content: Text(message), backgroundColor: AppColors.danger));
-        return;
-      }
-      final completed = await controller.redeemToken(normalized);
+      final ok = await TokenRedeemService(context.read<AppController>()).redeemAndShowDialog(context, normalized);
       if (!mounted) return;
-      setState(() => result = completed);
-      final done = completed.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué';
-      messenger.showSnackBar(SnackBar(content: Text(done), backgroundColor: AppColors.mint));
-    } catch (error) {
-      if (!mounted) return;
-      final message = error is ApiException ? error.message : 'Lecture du jeton impossible.';
-      setState(() => errorMessage = message);
-      messenger.showSnackBar(SnackBar(content: Text(message), backgroundColor: AppColors.danger));
-      _lastScanned = null;
+      if (!ok) _lastScanned = null;
     } finally {
-      if (mounted) setState(() => _busy = false);
-      _busy = false;
+      if (mounted) {
+        setState(() => _busy = false);
+        await camera.start();
+      } else {
+        _busy = false;
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final canPop = Navigator.canPop(context);
-    final doneLabel = result == null
-        ? null
-        : result!.isWithdrawal
-            ? 'Retrait effectué'
-            : 'Dépôt effectué';
     return Scaffold(
-      appBar: canPop ? AppBar(title: const Text('Vérifier le jeton')) : null,
+      appBar: canPop ? AppBar(title: const Text('Scanner le jeton')) : null,
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
         children: [
-          const Text('Vérifier le token PDR', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 6),
-          const Text('Scannez le QR code du client : la demande est validée automatiquement.', style: TextStyle(color: AppColors.muted, height: 1.35)),
-          const SizedBox(height: 14),
-          Row(children: [
-            Expanded(
-              child: _ModeButton(
-                label: 'Scanner',
-                icon: Icons.qr_code_scanner_rounded,
-                selected: !manual,
-                onTap: _busy
-                    ? null
-                    : () => setState(() {
-                          manual = false;
-                          camera.start();
-                        }),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _ModeButton(
-                label: 'Saisir un code',
-                icon: Icons.dialpad_rounded,
-                selected: manual,
-                onTap: _busy
-                    ? null
-                    : () => setState(() {
-                          manual = true;
-                          camera.stop();
-                        }),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 14),
-          if (!manual)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: SizedBox(
-                height: 260,
-                child: Stack(fit: StackFit.expand, children: [
-                  MobileScanner(controller: camera, onDetect: _onDetect),
-                  const IgnorePointer(child: Center(child: SizedBox(width: 200, height: 200, child: CustomPaint(painter: _ScanCorners())))),
-                  if (_busy)
-                    ColoredBox(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      child: const Center(child: CircularProgressIndicator(color: Colors.white)),
-                    ),
-                ]),
-              ),
-            ),
-          if (manual) ...[
-            TextField(
-              controller: code,
-              enabled: !_busy,
-              textCapitalization: TextCapitalization.characters,
-              onChanged: (_) => setState(() {
-                result = null;
-                errorMessage = null;
-              }),
-              decoration: InputDecoration(
-                hintText: 'FC-4829-7714',
-                filled: true,
-                fillColor: AppColors.mist,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-              ),
-            ),
-            const SizedBox(height: 12),
-            PrimaryButton(
-              label: _busy ? 'Traitement…' : 'Valider le code',
-              onPressed: _busy || code.text.trim().isEmpty ? null : () => _processCode(code.text),
-            ),
-            if (_busy) ...[
-              const SizedBox(height: 16),
-              const Center(child: CircularProgressIndicator(color: AppColors.brand)),
-            ],
+          if (!canPop) ...[
+            const Text('Scanner le jeton', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night)),
+            const SizedBox(height: 6),
           ],
-          if (!manual && code.text.trim().isNotEmpty) ...[
+          const Text(
+            'Scannez le QR code du client : la validation se fait automatiquement. Le résultat s’affiche dans une fenêtre.',
+            style: TextStyle(color: AppColors.muted, height: 1.35),
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: SizedBox(
+              height: 280,
+              child: Stack(fit: StackFit.expand, children: [
+                MobileScanner(controller: camera, onDetect: _onDetect),
+                const IgnorePointer(child: Center(child: SizedBox(width: 200, height: 200, child: CustomPaint(painter: _ScanCorners())))),
+                if (_busy)
+                  ColoredBox(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+                  ),
+              ]),
+            ),
+          ),
+          if (_lastCode != null) ...[
             const SizedBox(height: 12),
-            SoftCard(child: Text('Code lu : ${code.text.trim().toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.w700))),
+            SoftCard(child: Text('Dernier code lu : $_lastCode', style: const TextStyle(fontWeight: FontWeight.w700))),
           ],
           const SizedBox(height: 12),
           SoftCard(
@@ -556,64 +495,87 @@ class _PdrScanPageState extends State<PdrScanPage> {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Le scan lance la recherche puis clôture automatiquement la demande. Seul le PDR qui a accepté peut valider ce ticket.',
+                  'Seul le PDR qui a accepté la demande peut valider ce ticket.',
                   style: TextStyle(height: 1.35),
                 ),
               ),
             ]),
           ),
-          if (result != null) ...[
-            const SizedBox(height: 12),
-            SoftCard(
-              color: result!.status == 'completed' ? AppColors.mintSoft : Colors.white,
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (result!.status == 'completed' && doneLabel != null) ...[
-                  Text(doneLabel, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: AppColors.mint)),
-                  const SizedBox(height: 8),
-                ],
-                Text(result!.userName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                Text(formatMoney(result!.amount, result!.currency), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.brand)),
-                Text('Jeton ${result!.tokenCode ?? code.text}'),
-                Text('Statut : ${statusLabel(result!.status, type: result!.type)}', style: const TextStyle(color: AppColors.muted)),
-                if (errorMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(errorMessage!, style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
-                  ),
-              ]),
-            ),
-          ] else if (errorMessage != null) ...[
-            const SizedBox(height: 12),
-            SoftCard(
-              color: AppColors.dangerSoft,
-              child: Text(errorMessage!, style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
-            ),
-          ],
+          const SizedBox(height: 16),
+          PrimaryButton(
+            label: 'Saisir le ticket manuellement',
+            icon: Icons.dialpad_rounded,
+            onPressed: _busy
+                ? null
+                : () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrManualTokenPage())),
+          ),
         ],
       ),
     );
   }
 }
 
-class _ModeButton extends StatelessWidget {
-  const _ModeButton({required this.label, required this.icon, required this.selected, required this.onTap});
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback? onTap;
+class PdrManualTokenPage extends StatefulWidget {
+  const PdrManualTokenPage({super.key, this.initialCode});
+  final String? initialCode;
+
+  @override
+  State<PdrManualTokenPage> createState() => _PdrManualTokenPageState();
+}
+
+class _PdrManualTokenPageState extends State<PdrManualTokenPage> {
+  late final TextEditingController code = TextEditingController(text: widget.initialCode ?? '');
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verify() async {
+    if (_busy || code.text.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await TokenRedeemService(context.read<AppController>()).redeemAndShowDialog(context, code.text);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 48,
-      child: selected
-          ? FilledButton.icon(
-              onPressed: onTap,
-              icon: Icon(icon, size: 18),
-              label: Text(label),
-              style: FilledButton.styleFrom(backgroundColor: AppColors.brand, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
-            )
-          : TextButton.icon(onPressed: onTap, icon: Icon(icon, size: 18, color: AppColors.night), label: Text(label, style: const TextStyle(color: AppColors.night, fontWeight: FontWeight.w700))),
+    return Scaffold(
+      appBar: AppBar(title: const Text('Saisie manuelle')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const Text(
+            'Entrez le code du ticket puis appuyez sur Vérifier.',
+            style: TextStyle(color: AppColors.muted, height: 1.35),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: code,
+            enabled: !_busy,
+            textCapitalization: TextCapitalization.characters,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: 'FC-4829-7714',
+              filled: true,
+              fillColor: AppColors.mist,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+            ),
+          ),
+          const SizedBox(height: 16),
+          PrimaryButton(
+            label: _busy ? 'Vérification…' : 'Vérifier',
+            icon: Icons.verified_outlined,
+            busy: _busy,
+            onPressed: _busy || code.text.trim().isEmpty ? null : _verify,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -644,6 +606,20 @@ class _ScanCorners extends CustomPainter {
 class LiquidityPage extends StatelessWidget {
   const LiquidityPage({super.key});
 
+  Future<void> _openRecharge(BuildContext context) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _RechargeLiquidityDialog(),
+    );
+    if (!context.mounted || result == null) return;
+    final ok = result['ok'] == true;
+    final message = (result['message'] as String?) ?? (ok ? 'Recharge réussie.' : 'Transaction échouée.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: ok ? AppColors.mint : AppColors.danger),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pdr = context.watch<AppController>().pdr;
@@ -659,29 +635,168 @@ class LiquidityPage extends StatelessWidget {
           const SizedBox(height: 16),
           if (pdr == null)
             const SoftCard(child: Text('Point de retrait introuvable.'))
-          else
+          else ...[
             SoftCard(
               color: AppColors.mintSoft,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Disponibles', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted)),
+                  const Text('Disponible (CDF)', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted)),
                   const SizedBox(height: 10),
-                  Text(formatMoney(pdr.usdAvailable, 'USD'), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-                  const SizedBox(height: 6),
-                  Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  Text(formatMoney(pdr.cdfAvailable, 'CDF'), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Seuil du jour (${pdr.liquidityCoverPercent.toStringAsFixed(pdr.liquidityCoverPercent.truncateToDouble() == pdr.liquidityCoverPercent ? 0 : 1)} %) : ${formatMoney(pdr.liquidityCoverCdf, 'CDF')}',
+                    style: const TextStyle(color: AppColors.muted, height: 1.35),
+                  ),
                   if (!pdr.hasAvailableLiquidity) ...[
                     const SizedBox(height: 12),
                     const Text(
-                      'Disponible à 0 : statut verrouillé sur fermé. Vous pourrez ouvrir ou fermer le point seulement quand le disponible sera différent de 0.',
+                      'Liquidité ≤ seuil de couverture : statut verrouillé sur fermé. Rajoutez de la liquidité pour pouvoir rouvrir le point.',
                       style: TextStyle(color: AppColors.danger, height: 1.35),
                     ),
                   ],
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            PrimaryButton(
+              label: 'Rajouter liquidité',
+              icon: Icons.add_card_outlined,
+              onPressed: () => _openRecharge(context),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _RechargeLiquidityDialog extends StatefulWidget {
+  const _RechargeLiquidityDialog();
+
+  @override
+  State<_RechargeLiquidityDialog> createState() => _RechargeLiquidityDialogState();
+}
+
+class _RechargeLiquidityDialogState extends State<_RechargeLiquidityDialog> {
+  static const _operators = {
+    'orange': 'Orange Money',
+    'airtel': 'Airtel Money',
+    'mpesa': 'M-Pesa',
+    'afrimoney': 'AfriMoney',
+  };
+
+  String? network;
+  final amountCtrl = TextEditingController();
+  final pinCtrl = TextEditingController();
+  bool busy = false;
+  String? error;
+
+  @override
+  void dispose() {
+    amountCtrl.dispose();
+    pinCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final selected = network;
+    final amount = double.tryParse(amountCtrl.text.replaceAll(' ', '').replaceAll(',', '.'));
+    final pin = pinCtrl.text.trim();
+    if (selected == null) {
+      setState(() => error = 'Choisissez un opérateur Mobile Money.');
+      return;
+    }
+    if (amount == null || amount < 1000) {
+      setState(() => error = 'Saisissez un montant d’au moins 1 000 CDF.');
+      return;
+    }
+    if (pin.length < 4 || int.tryParse(pin) == null) {
+      setState(() => error = 'Saisissez votre code PIN (4 à 6 chiffres).');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final recharge = await context.read<AppController>().rechargeLiquidity(
+            network: selected,
+            amount: amount,
+            pin: pin,
+          );
+      if (!mounted) return;
+      Navigator.pop(context, recharge);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        busy = false;
+        error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        busy = false;
+        error = 'Impossible de finaliser la recharge.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rajouter liquidité'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Simulez une recharge Mobile Money vers votre compte virtuel CDF.',
+              style: TextStyle(color: AppColors.muted, height: 1.35),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              value: network,
+              decoration: const InputDecoration(labelText: 'Opérateur Mobile Money'),
+              items: [
+                for (final entry in _operators.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+              ],
+              onChanged: busy ? null : (value) => setState(() => network = value),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              enabled: !busy,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Montant (CDF)', hintText: 'Ex. 50000'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: pinCtrl,
+              enabled: !busy,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: const InputDecoration(labelText: 'Code PIN Mobile Money', counterText: ''),
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 8),
+              Text(error!, style: const TextStyle(color: AppColors.danger, height: 1.3)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: busy ? null : () => Navigator.pop(context), child: const Text('Annuler')),
+        FilledButton(
+          onPressed: busy ? null : _submit,
+          child: busy
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Confirmer'),
+        ),
+      ],
     );
   }
 }
@@ -694,15 +809,17 @@ class PdrHistoryPage extends StatefulWidget {
 }
 
 class _PdrHistoryPageState extends State<PdrHistoryPage> {
+  static const _finalStatuses = {'completed', 'cancelled', 'refused'};
+
   String type = 'all';
   String? status;
   String? currency;
 
   @override
   Widget build(BuildContext context) {
-    final historyStatuses = statusLabels.keys.where((key) => key != 'pending').toList();
+    const historyStatuses = ['completed', 'cancelled', 'refused'];
     final items = context.watch<AppController>().operations.where((operation) {
-      if (operation.status == 'pending') return false;
+      if (!_finalStatuses.contains(operation.status)) return false;
       if (type != 'all' && operation.type != type) return false;
       if (status != null && operation.status != status) return false;
       if (currency != null && operation.currency != currency) return false;
@@ -722,7 +839,7 @@ class _PdrHistoryPageState extends State<PdrHistoryPage> {
         ]),
         const SizedBox(height: 8),
         DropdownButton<String?>(
-          value: status == 'pending' ? null : status,
+          value: status != null && _finalStatuses.contains(status) ? status : null,
           hint: const Text('Statut'),
           items: [
             const DropdownMenuItem<String?>(value: null, child: Text('Tous les statuts')),
@@ -741,8 +858,26 @@ class _PdrHistoryPageState extends State<PdrHistoryPage> {
   }
 }
 
-class RatingsPage extends StatelessWidget {
+class RatingsPage extends StatefulWidget {
   const RatingsPage({super.key});
+
+  @override
+  State<RatingsPage> createState() => _RatingsPageState();
+}
+
+class _RatingsPageState extends State<RatingsPage> {
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await context.read<AppController>().loadRatings();
+      } catch (_) {}
+      if (mounted) setState(() => _loading = false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -755,15 +890,20 @@ class RatingsPage extends StatelessWidget {
         children: [
           Text('Note moyenne ${pdr?.ratingAvg.toStringAsFixed(1) ?? '-'} / 5', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
           const SizedBox(height: 12),
-          ...ratings.map((rating) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: SoftCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(rating.userName, style: const TextStyle(fontWeight: FontWeight.w800)),
-                  Text('★' * rating.stars, style: const TextStyle(color: AppColors.brand)),
-                  if (rating.comment.isNotEmpty) Text(rating.comment),
-                  Text(formatDate(rating.createdAt), style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-                ])),
-              )),
+          if (_loading)
+            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator(color: AppColors.brand)))
+          else if (ratings.isEmpty)
+            const Text('Aucun avis pour le moment.', style: TextStyle(color: AppColors.muted))
+          else
+            ...ratings.map((rating) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SoftCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(rating.userName, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    Text('★' * rating.stars, style: const TextStyle(color: AppColors.brand)),
+                    if (rating.comment.isNotEmpty) Text(rating.comment),
+                    Text(formatDate(rating.createdAt), style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                  ])),
+                )),
         ],
       ),
     );

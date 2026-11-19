@@ -141,12 +141,28 @@ export class AppController {
     this.setState({ section: 'pdr-form', pdrDraft: pdr, error: '', notice: '' })
   }
 
-  async loadDashboard() {
+  async loadDashboard(filters = {}) {
+    const from = filters.from || this.pdrChartFrom || null
+    const to = filters.to || this.pdrChartTo || null
+    const network = filters.network ?? this.pdrChartNetwork ?? null
+    this.pdrChartFrom = from
+    this.pdrChartTo = to
+    this.pdrChartNetwork = network
     const [dashboard, charts] = await Promise.all([
       this.model.dashboard(this.token),
-      this.model.charts(this.token),
+      this.model.charts(this.token, { from, to, network }),
     ])
     this.setState({ dashboard, charts })
+  }
+
+  async loadPdrCharts(from, to, network) {
+    this.pdrChartFrom = from
+    this.pdrChartTo = to
+    this.pdrChartNetwork = network || null
+    await this.run(async () => {
+      const charts = await this.model.charts(this.token, { from, to, network: this.pdrChartNetwork })
+      this.setState({ charts })
+    })
   }
 
   async loadUsers() {
@@ -205,7 +221,7 @@ export class AppController {
     this.setState({ settings, banner: settings.banner || '' })
     await this.loadSection(section)
     if (section === 'reports' && this.reportFrom) {
-      const reports = await this.model.reports(token, this.reportFrom, this.reportTo)
+      const reports = await this.model.reports(token, this.reportFrom, this.reportTo, this.reportNetwork)
       this.setState({ reports })
     }
     this.setState({ ready: true, busy: false })
@@ -215,11 +231,12 @@ export class AppController {
     return this.run(() => this.refresh())
   }
 
-  async loadReports(from, to) {
+  async loadReports(from, to, network = null) {
     this.reportFrom = from
     this.reportTo = to
+    this.reportNetwork = network || null
     await this.run(async () => {
-      const reports = await this.model.reports(this.token, from, to)
+      const reports = await this.model.reports(this.token, from, to, this.reportNetwork)
       this.setState({ reports })
     })
   }

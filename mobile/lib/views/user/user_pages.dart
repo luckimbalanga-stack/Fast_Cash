@@ -205,6 +205,8 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
+  static const _finalStatuses = {'completed', 'cancelled', 'refused'};
+
   String type = 'all';
   String period = 'all';
 
@@ -212,6 +214,7 @@ class _HistoryPageState extends State<HistoryPage> {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final items = context.watch<AppController>().operations.where((operation) {
+      if (!_finalStatuses.contains(operation.status)) return false;
       if (type != 'all' && operation.type != type) return false;
       if (period == 'all') return true;
       final date = DateTime.parse(operation.createdAt).toLocal();

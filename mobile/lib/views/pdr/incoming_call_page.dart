@@ -54,13 +54,16 @@ class _IncomingCallPageState extends State<IncomingCallPage> {
 
   @override
   void dispose() {
+    // Wakelock uniquement pendant l’écran d’appel — le téléphone peut dormir ensuite.
     unawaited(WakelockPlus.disable());
+    if (!_closing) unawaited(PdrCallAlert.dismiss());
     super.dispose();
   }
 
   Future<void> _close() async {
     if (_closing) return;
     _closing = true;
+    await WakelockPlus.disable();
     await PdrCallAlert.dismiss();
     if (mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();

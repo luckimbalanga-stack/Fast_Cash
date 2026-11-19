@@ -58,7 +58,11 @@ export function SettingsView() {
     >
       <h3>Paramètres d’exploitation</h3>
       <p className="muted">Ces valeurs s’appliquent aux prochaines opérations.</p>
-      <label>Frais de retrait (%)<input value={fee} onChange={(event) => setFee(event.target.value)} /><small>Entre 0 et 10</small></label>
+      <label>
+        Frais / couverture liquidité (%)
+        <input value={fee} onChange={(event) => setFee(event.target.value)} />
+        <small>Entre 0 et 10 — aussi utilisé comme seuil : si (ce % × transactions réussies du jour) ≥ liquidité CDF, le PDR est forcé fermé</small>
+      </label>
       <label>Validité du jeton (minutes)<input value={minutes} onChange={(event) => setMinutes(event.target.value)} /><small>Entre 5 et 180</small></label>
       <label>Taux indicatif 1 USD en CDF<input value={rate} onChange={(event) => setRate(event.target.value)} /><small>Entre 100 et 20 000</small></label>
       <label>

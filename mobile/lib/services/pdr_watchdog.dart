@@ -33,8 +33,8 @@ class PdrWatchdog {
       ),
       iosNotificationOptions: const IOSNotificationOptions(showNotification: false, playSound: false),
       foregroundTaskOptions: ForegroundTaskOptions(
-        // Poll plus fréquent = détection plus rapide de la demande.
-        eventAction: ForegroundTaskEventAction.repeat(1200),
+        // 2,5 s : assez rapide pour une offre ~30 s, sans saturer l’API.
+        eventAction: ForegroundTaskEventAction.repeat(2500),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
@@ -124,6 +124,9 @@ class _PdrWatchHandler extends TaskHandler {
   static const _channel = MethodChannel('fast_cash/incoming_call');
   int? _lastRangId;
   bool _polling = false;
+  HttpClient? _client;
+
+  HttpClient get _http => _client ??= HttpClient()..idleTimeout = const Duration(seconds: 15);
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -138,7 +141,10 @@ class _PdrWatchHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {}
+  Future<void> onDestroy(DateTime timestamp) async {
+    _client?.close(force: true);
+    _client = null;
+  }
 
   Future<void> _poll() async {
     try {
@@ -149,88 +155,81 @@ class _PdrWatchHandler extends TaskHandler {
       final offer = prefs.getInt('fc_watch_offer') ?? 30;
       if (!open || token == null || token.isEmpty || api == null || api.isEmpty) return;
 
-      final client = HttpClient();
-      try {
-        final uri = Uri.parse('$api/api/operations');
-        final req = await client.getUrl(uri);
-        req.headers.set('Authorization', 'Bearer $token');
-        req.headers.set('Content-Type', 'application/json');
-        // Timeout court pour ne pas rater la fenêtre d’offre.
-        final res = await req.close().timeout(const Duration(seconds: 6));
-        if (res.statusCode >= 400) return;
-        final body = await res.transform(const Utf8Decoder()).join();
-        final decoded = jsonDecode(body);
-        if (decoded is! List) return;
-        final now = DateTime.now();
-        Map<String, dynamic>? best;
-        DateTime? bestCreated;
-        for (final raw in decoded) {
-          if (raw is! Map) continue;
-          final item = Map<String, dynamic>.from(raw);
-          if (item['status'] != 'pending') continue;
-          final createdRaw = item['created_at'] as String?;
-          final created = createdRaw == null ? null : DateTime.tryParse(createdRaw)?.toLocal();
-          if (created == null) continue;
-          final deadline = created.add(Duration(seconds: offer.clamp(5, 120)));
-          if (!now.isBefore(deadline)) continue;
-          if (bestCreated == null || created.isBefore(bestCreated)) {
-            bestCreated = created;
-            best = item;
-          }
+      final uri = Uri.parse('$api/api/operations?status=pending&limit=5&include_timeline=false');
+      final req = await _http.getUrl(uri);
+      req.headers.set('Authorization', 'Bearer $token');
+      req.headers.set('Content-Type', 'application/json');
+      final res = await req.close().timeout(const Duration(seconds: 6));
+      if (res.statusCode >= 400) return;
+      final body = await res.transform(const Utf8Decoder()).join();
+      final decoded = jsonDecode(body);
+      if (decoded is! List) return;
+      final now = DateTime.now();
+      Map<String, dynamic>? best;
+      DateTime? bestCreated;
+      for (final raw in decoded) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        if (item['status'] != 'pending') continue;
+        final createdRaw = item['created_at'] as String?;
+        final created = createdRaw == null ? null : DateTime.tryParse(createdRaw)?.toLocal();
+        if (created == null) continue;
+        final deadline = created.add(Duration(seconds: offer.clamp(5, 120)));
+        if (!now.isBefore(deadline)) continue;
+        if (bestCreated == null || created.isBefore(bestCreated)) {
+          bestCreated = created;
+          best = item;
         }
-        if (best == null) {
-          _lastRangId = null;
-          return;
-        }
-
-        final opId = best['id'];
-        final operationId = opId is int ? opId : int.tryParse('$opId');
-        if (operationId == null) return;
-
-        // Sonnerie native IMMÉDIATE depuis l’isolate (avant le round-trip UI).
-        if (_lastRangId != operationId) {
-          _lastRangId = operationId;
-          final wait = offer.clamp(5, 120);
-          final type = '${best['type']}' == 'withdrawal' ? 'Retrait' : 'Dépôt';
-          final name = '${best['user_name'] ?? 'Client'}';
-          final currency = '${best['currency'] ?? ''}';
-          final amountRaw = best['amount'];
-          final amount = amountRaw is num
-              ? amountRaw.toStringAsFixed(currency == 'CDF' ? 0 : 2)
-              : '$amountRaw';
-          final seed = Map<String, dynamic>.from(best)..['wait'] = wait;
-          final payloadJson = jsonEncode(seed);
-          try {
-            FlutterForegroundTask.wakeUpScreen();
-          } catch (_) {}
-          try {
-            await _channel.invokeMethod<void>('ringNow', {
-              'operationId': operationId,
-              'title': 'Appel entrant Fast-Cash',
-              'body': '$type · $name · $amount $currency',
-              'callerName': name,
-              'waitSeconds': wait,
-              'payloadJson': payloadJson,
-            });
-          } catch (_) {}
-          try {
-            FlutterForegroundTask.launchApp();
-          } catch (_) {}
-        }
-
-        FlutterForegroundTask.sendDataToMain({
-          'operation_id': best['id'],
-          'type': best['type'],
-          'user_name': best['user_name'],
-          'amount': best['amount'],
-          'currency': best['currency'],
-          'created_at': best['created_at'],
-          'wait': offer,
-          'raw': best,
-        });
-      } finally {
-        client.close(force: true);
       }
+      if (best == null) {
+        _lastRangId = null;
+        return;
+      }
+
+      final opId = best['id'];
+      final operationId = opId is int ? opId : int.tryParse('$opId');
+      if (operationId == null) return;
+
+      if (_lastRangId != operationId) {
+        _lastRangId = operationId;
+        final wait = offer.clamp(5, 120);
+        final type = '${best['type']}' == 'withdrawal' ? 'Retrait' : 'Dépôt';
+        final name = '${best['user_name'] ?? 'Client'}';
+        final currency = '${best['currency'] ?? ''}';
+        final amountRaw = best['amount'];
+        final amount = amountRaw is num
+            ? amountRaw.toStringAsFixed(currency == 'CDF' ? 0 : 2)
+            : '$amountRaw';
+        final seed = Map<String, dynamic>.from(best)..['wait'] = wait;
+        final payloadJson = jsonEncode(seed);
+        try {
+          FlutterForegroundTask.wakeUpScreen();
+        } catch (_) {}
+        try {
+          await _channel.invokeMethod<void>('ringNow', {
+            'operationId': operationId,
+            'title': 'Appel entrant Fast-Cash',
+            'body': '$type · $name · $amount $currency',
+            'callerName': name,
+            'waitSeconds': wait,
+            'payloadJson': payloadJson,
+          });
+        } catch (_) {}
+        try {
+          FlutterForegroundTask.launchApp();
+        } catch (_) {}
+      }
+
+      FlutterForegroundTask.sendDataToMain({
+        'operation_id': best['id'],
+        'type': best['type'],
+        'user_name': best['user_name'],
+        'amount': best['amount'],
+        'currency': best['currency'],
+        'created_at': best['created_at'],
+        'wait': offer,
+        'raw': best,
+      });
     } catch (_) {
       // Silence : le tick suivant réessayera.
     }

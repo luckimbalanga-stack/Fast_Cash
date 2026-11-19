@@ -6,12 +6,23 @@ export function createAdminModel() {
     settings: () => request('/api/settings'),
     enter: (email, password) => request('/api/auth/admin/enter', { method: 'POST', body: { email, password } }),
     dashboard: (token) => request('/api/admin/dashboard', { token }),
-    charts: (token) => request('/api/admin/charts', { token }),
+    charts: (token, { from, to, network } = {}) => {
+      const query = new URLSearchParams()
+      if (from) query.set('date_from', from)
+      if (to) query.set('date_to', to)
+      if (network) query.set('network', network)
+      const suffix = query.toString() ? `?${query}` : ''
+      return request(`/api/admin/charts${suffix}`, { token })
+    },
     users: (token) => request('/api/admin/users', { token }),
     pdrs: (token) => request('/api/pdr', { token }),
     team: (token) => request('/api/admin/admins', { token }),
     operations: (token) => request('/api/operations', { token }),
-    reports: (token, from, to) => request(`/api/admin/reports?date_from=${from}&date_to=${to}`, { token }),
+    reports: (token, from, to, network) => {
+      const query = new URLSearchParams({ date_from: from, date_to: to })
+      if (network) query.set('network', network)
+      return request(`/api/admin/reports?${query}`, { token })
+    },
     setUserStatus: (token, id, status) => request(`/api/users/${id}`, { method: 'PATCH', token, body: { status } }),
     importUsers: (token, users) => request('/api/admin/users/import', { method: 'POST', token, body: { users } }),
     createPdr: (token, body) => request('/api/pdr', { method: 'POST', token, body }),

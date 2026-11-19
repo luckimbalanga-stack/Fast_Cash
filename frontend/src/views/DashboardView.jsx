@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
-import { useAppState } from '../controllers/context'
+import { useEffect, useRef, useState } from 'react'
+import { useAppController, useAppState } from '../controllers/context'
 import { exportExcel } from '../models/excel'
 import { formatDelta, formatMoney, groupDigits } from '../models/format'
+import { isoDay } from '../models/money'
+import { OPERATORS } from '../models/operators'
 import { Icon } from './ui'
 
 const metricIcons = {
@@ -179,13 +181,76 @@ function VolumeChart({ days }) {
   )
 }
 
+function PdrVolumeChart({ days }) {
+  const controller = useAppController()
+  const today = new Date()
+  const filters = useAppState().charts?.pdr_filters || {}
+  const [from, setFrom] = useState(filters.date_from || isoDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)))
+  const [to, setTo] = useState(filters.date_to || isoDay(today))
+  const [network, setNetwork] = useState(filters.network || '')
+
+  useEffect(() => {
+    if (filters.date_from) setFrom(filters.date_from)
+    if (filters.date_to) setTo(filters.date_to)
+    setNetwork(filters.network || '')
+  }, [filters.date_from, filters.date_to, filters.network])
+
+  const total = days.reduce((sum, day) => sum + Number(day.total || 0), 0)
+  const chartDays = days.map((day) => ({
+    date: day.date,
+    withdrawals: Number(day.withdrawals || 0),
+    deposits: Number(day.deposits || 0),
+  }))
+
+  return (
+    <article className="card">
+      <div className="chart-head">
+        <div>
+          <h3>Transactions PDR (CDF)</h3>
+          <p className="chart-total">{formatMoney(total, 'CDF')}</p>
+          <p className="muted">Volume réussi côté points de retrait, converti en CDF. Filtrez par dates et opérateur.</p>
+        </div>
+        <div className="chart-tools">
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => exportVolume(chartDays, 'CDF')}
+          >
+            Exporter Excel
+          </button>
+        </div>
+      </div>
+      <div className="toolbar">
+        <label>Du<input type="date" value={from} max={to} onChange={(event) => setFrom(event.target.value)} /></label>
+        <label>Au<input type="date" value={to} min={from} onChange={(event) => setTo(event.target.value)} /></label>
+        <label>
+          Opérateur
+          <select value={network} onChange={(event) => setNetwork(event.target.value)}>
+            {OPERATORS.map(([value, label]) => <option key={value || 'all'} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <button type="button" className="primary" onClick={() => controller.loadPdrCharts(from, to, network || null)}>Appliquer</button>
+      </div>
+      {chartDays.length === 0 ? (
+        <p className="muted">Aucune transaction PDR réussie sur cette période.</p>
+      ) : (
+        <>
+          <LineChart days={chartDays} currency="CDF" />
+          <p className="legend"><i className="dot night" /> Dépôts <i className="dot brand" /> Retraits</p>
+        </>
+      )}
+    </article>
+  )
+}
+
 export function DashboardView() {
   const { dashboard, charts } = useAppState()
   if (!dashboard) return <p className="muted">Chargement du tableau de bord…</p>
   const cards = ['users', 'active_pdr', 'transactions', 'withdrawals', 'deposits', 'pending', 'completed', 'refused'].map((key) => metric(dashboard, key))
   const days = charts?.daily || []
-  const operators = charts?.operators || []
-  const operatorMax = Math.max(1, ...operators.map((row) => row.count))
+  const pdrDays = charts?.pdr_daily || []
+  const networkRows = charts?.operators || []
+  const operatorMax = Math.max(1, ...networkRows.map((row) => row.count))
   const top = charts?.top_pdrs || []
 
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
@@ -220,10 +285,11 @@ export function DashboardView() {
       </div>
       <p className="muted">Les variations comparent les 15 derniers jours aux 15 jours précédents.</p>
       {days.length === 0 ? <article className="card"><h3>Volume des opérations</h3><p className="muted">Pas encore de volume</p></article> : <VolumeChart days={days} />}
+      <PdrVolumeChart days={pdrDays} />
       <div className="split">
         <article className="card">
           <h3>Répartition par opérateur</h3>
-          {operators.length === 0 ? <p className="muted">Aucune transaction</p> : operators.map((row) => (
+          {networkRows.length === 0 ? <p className="muted">Aucune transaction</p> : networkRows.map((row) => (
             <div key={row.network} className="hbar">
               <div><span>{row.label}</span><b>{row.count}</b></div>
               <i style={{ width: `${Math.max(4, (row.count / operatorMax) * 100)}%` }} />

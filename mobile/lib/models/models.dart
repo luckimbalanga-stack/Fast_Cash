@@ -92,6 +92,10 @@ class PdrPoint {
     this.distanceM,
     this.etaMin,
     this.availableForRequest,
+    this.daySuccessVolumeCdf = 0,
+    this.liquidityCoverCdf = 0,
+    this.liquidityCoverPercent = 1,
+    this.canToggleOpen,
   });
 
   final int id;
@@ -121,9 +125,13 @@ class PdrPoint {
   final double? distanceM;
   final int? etaMin;
   final bool? availableForRequest;
+  final double daySuccessVolumeCdf;
+  final double liquidityCoverCdf;
+  final double liquidityCoverPercent;
+  final bool? canToggleOpen;
 
-  /// Au moins une devise avec un disponible > 0.
-  bool get hasAvailableLiquidity => usdAvailable > 0 || cdfAvailable > 0;
+  /// Peut ouvrir/fermer si liquidité CDF > seuil de couverture du jour.
+  bool get hasAvailableLiquidity => canToggleOpen ?? (cdfAvailable > liquidityCoverCdf);
 
   factory PdrPoint.fromJson(Map<String, dynamic> json) => PdrPoint(
         id: json['id'] as int,
@@ -153,6 +161,10 @@ class PdrPoint {
         distanceM: (json['distance_m'] as num?)?.toDouble(),
         etaMin: json['eta_min'] as int?,
         availableForRequest: json['available_for_request'] as bool?,
+        daySuccessVolumeCdf: (json['day_success_volume_cdf'] as num?)?.toDouble() ?? 0,
+        liquidityCoverCdf: (json['liquidity_cover_cdf'] as num?)?.toDouble() ?? 0,
+        liquidityCoverPercent: (json['liquidity_cover_percent'] as num?)?.toDouble() ?? 1,
+        canToggleOpen: json['can_toggle_open'] as bool?,
       );
 }
 
@@ -231,6 +243,39 @@ class CashOperation {
   final List<TimelineEvent> timeline;
 
   bool get isWithdrawal => type == 'withdrawal';
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'reference': reference,
+        'type': type,
+        'user_id': userId,
+        'user_name': userName,
+        'pdr_id': pdrId,
+        'pdr_name': pdrName,
+        'pdr_address': pdrAddress,
+        'pdr_commune': pdrCommune,
+        'pdr_lat': pdrLat,
+        'pdr_lng': pdrLng,
+        'pdr_hours': pdrHours,
+        'pdr_phone': pdrPhone,
+        'phone': phone,
+        'network': network,
+        'network_label': networkLabel,
+        'amount': amount,
+        'currency': currency,
+        'fees': fees,
+        'total': total,
+        'status': status,
+        'token_code': tokenCode,
+        'token_status': tokenStatus,
+        'token_expires_at': tokenExpiresAt,
+        'rating_stars': ratingStars,
+        'rating_comment': ratingComment,
+        'created_at': createdAt,
+        'timeline': timeline
+            .map((event) => {'status': event.status, 'label': event.label, 'created_at': event.createdAt})
+            .toList(),
+      };
 
   factory CashOperation.fromJson(Map<String, dynamic> json) => CashOperation(
         id: json['id'] as int,

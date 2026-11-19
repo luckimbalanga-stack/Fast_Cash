@@ -49,12 +49,18 @@ def _database_url() -> str:
 DATABASE_URL = _database_url()
 IS_SQLITE = DATABASE_URL.startswith("sqlite:")
 
+# Hiérarchie connexions : pool réduit par microservice (5 process × pool) pour Neon.
 engine_kwargs = {"future": True}
 if IS_SQLITE:
     engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
 else:
-    # Neon / Postgres : pool sain pour Render (wake + connexions intermittentes).
-    engine_kwargs.update(pool_pre_ping=True, pool_size=5, max_overflow=10)
+    engine_kwargs.update(
+        pool_pre_ping=True,
+        pool_size=2,
+        max_overflow=3,
+        pool_recycle=280,
+        pool_timeout=10,
+    )
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
@@ -79,14 +85,28 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 
 def get_db():
+    """Session requête HTTP : commit seulement s’il y a eu des écritures (CQS léger)."""
     db = SessionLocal()
     try:
         yield db
-        db.commit()
+        if db.new or db.dirty or db.deleted:
+            db.commit()
+        else:
+            db.rollback()
     except Exception:
         db.rollback()
         raise
     finally:
+        db.close()
+
+
+def get_db_readonly():
+    """Session lecture seule — jamais de commit réseau."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.rollback()
         db.close()
 
 
@@ -126,20 +146,23 @@ def _ensure_otp_code_column_width() -> None:
         return
     with engine.begin() as connection:
         if IS_SQLITE:
-            # SQLite ignore déjà la longueur ; rien à migrer.
             return
         connection.execute(text("ALTER TABLE otp_challenges ALTER COLUMN code TYPE VARCHAR(64)"))
 
 
 def _ensure_perf_indexes() -> None:
-    inspector = inspect(engine)
-    if "pdrs" not in inspector.get_table_names():
-        return
-    existing = {idx["name"] for idx in inspector.get_indexes("pdrs")}
-    if "ix_pdrs_status_is_open" in existing:
-        return
+    """Index composites pour hot paths (liquidité, polling, notifs)."""
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_pdrs_status_is_open ON pdrs (status, is_open)",
+        "CREATE INDEX IF NOT EXISTS ix_operations_pdr_updated ON operations (pdr_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS ix_operations_pdr_status_created ON operations (pdr_id, status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_operations_user_status_created ON operations (user_id, status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_operations_status_created ON operations (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_notifications_audience_target_created ON notifications (audience, target_id, created_at)",
+    ]
     with engine.begin() as connection:
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_pdrs_status_is_open ON pdrs (status, is_open)"))
+        for statement in statements:
+            connection.execute(text(statement))
 
 
 def init_database(seed: bool = False) -> None:

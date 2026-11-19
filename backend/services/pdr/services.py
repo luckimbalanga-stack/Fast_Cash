@@ -1,15 +1,18 @@
 """Règles métier du service PDR."""
 
 import secrets
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from services.admin.services import settings_payload
 from shared.models import Pdr, PhoneNumber, Rating
+from shared.pending_ops import cancel_pending_for_pdr
+from shared.pdr_rules import pdr_can_handle
 from shared.serialize import pdr_dict, rating_dict
-from shared.utils import NETWORKS, hash_password, haversine_m, normalize_phone, now_iso, round_money
+from shared.settings_repo import settings_map, settings_payload, upsert_setting
+from shared.utils import KINSHASA, NETWORKS, hash_password, haversine_m, normalize_phone, now_iso, round_money
 
 
 def _generate_password(length: int = 10) -> str:
@@ -38,57 +41,240 @@ def _networks(values: list[str]) -> str:
     return ",".join(cleaned)
 
 
-def _supports(pdr: Pdr, network: str | None) -> bool:
-    if not network:
-        return True
-    return network in pdr.networks.split(",")
-
-
 def _available_amount(pdr: Pdr, currency: str) -> float:
     if currency == "USD":
         return pdr.usd_declared - pdr.usd_reserved
     return pdr.cdf_declared - pdr.cdf_reserved
 
 
+def _day_success_volume_cdf(
+    db: Session,
+    pdr_id: int,
+    day: str | None = None,
+    *,
+    rate: float | None = None,
+) -> float:
+    """Somme CDF des transactions réussies du PDR pour la journée (agrégation SQL)."""
+    from sqlalchemy import and_, case, func, or_
+
+    from shared.models import Operation
+
+    day_key = day or datetime.now(KINSHASA).strftime("%Y-%m-%d")
+    fx = float(rate if rate is not None else settings_payload(db).get("usd_cdf_rate", 2880))
+    success = Operation.status == "completed"
+    total = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Operation.currency == "CDF", Operation.amount),
+                        else_=Operation.amount * fx,
+                    )
+                ),
+                0.0,
+            )
+        )
+        .filter(
+            Operation.pdr_id == pdr_id,
+            Operation.updated_at >= f"{day_key}T00:00:00",
+            Operation.updated_at < f"{day_key}T23:59:59.999999",
+            success,
+        )
+        .scalar()
+    )
+    return round_money(float(total or 0), "CDF")
+
+
+def _liquidity_metrics(db: Session, pdr: Pdr, *, cfg: dict | None = None) -> tuple[float, float, float]:
+    """Une lecture settings + un volume → (volume, cover, fee%)."""
+    settings = cfg or settings_payload(db)
+    fee = max(0.0, float(settings.get("fee_percent", 1)))
+    volume = _day_success_volume_cdf(db, pdr.id, rate=float(settings.get("usd_cdf_rate", 2880)))
+    cover = round_money(volume * (fee / 100.0), "CDF")
+    return volume, cover, fee
+
+
+def _cover_required_cdf(db: Session, pdr_id: int) -> float:
+    pdr = db.get(Pdr, pdr_id)
+    if not pdr:
+        return 0.0
+    _, cover, _ = _liquidity_metrics(db, pdr)
+    return cover
+
+
+def _can_toggle_open(db: Session, pdr: Pdr, *, metrics: tuple[float, float, float] | None = None) -> bool:
+    """Ouverture possible ssi disponible CDF > (% × volume réussi du jour)."""
+    available = _available_amount(pdr, "CDF")
+    cover = metrics[1] if metrics else _cover_required_cdf(db, pdr.id)
+    return available > cover + 1e-6
+
+
 def _has_available_liquidity(pdr: Pdr) -> bool:
-    """True s’il reste au moins une devise avec un disponible > 0."""
-    return _available_amount(pdr, "USD") > 1e-6 or _available_amount(pdr, "CDF") > 1e-6
+    """True s’il reste du disponible CDF (> 0). La poche USD n’est plus utilisée."""
+    return _available_amount(pdr, "CDF") > 1e-6
 
 
-def _force_closed_without_liquidity(db: Session, pdr: Pdr) -> bool:
-    """Ferme le PDR si disponible = 0. Retourne True si fermeture effectuée."""
-    if _has_available_liquidity(pdr) or not pdr.is_open:
+def _force_closed_without_liquidity(
+    db: Session,
+    pdr: Pdr,
+    *,
+    metrics: tuple[float, float, float] | None = None,
+) -> bool:
+    """Ferme le PDR si disponible CDF ≤ couverture requise."""
+    metrics = metrics or _liquidity_metrics(db, pdr)
+    if _can_toggle_open(db, pdr, metrics=metrics) or not pdr.is_open:
         return False
     pdr.is_open = False
-    from services.operations.services import cancel_pending_for_pdr
-
-    cancel_pending_for_pdr(db, pdr.id, "Liquidités disponibles à 0 — point fermé automatiquement")
+    cover = metrics[1]
+    cancel_pending_for_pdr(
+        db,
+        pdr.id,
+        f"Liquidité insuffisante (couverture {cover:g} CDF) — point fermé automatiquement",
+    )
     return True
 
 
-def _require_liquidity_to_toggle(pdr: Pdr, want_open: bool) -> None:
-    """Ouverture/fermeture manuelle autorisée seulement s’il reste du disponible."""
-    if _has_available_liquidity(pdr):
+def _require_liquidity_to_toggle(db: Session, pdr: Pdr, want_open: bool) -> None:
+    """Ouverture/fermeture manuelle seulement si liquidité > couverture du jour."""
+    metrics = _liquidity_metrics(db, pdr)
+    if _can_toggle_open(db, pdr, metrics=metrics):
         return
-    # Sans liquidité : statut verrouillé à fermé.
     if want_open:
+        volume, cover, fee = metrics
+        del volume
         raise HTTPException(
             status_code=400,
-            detail="Statut verrouillé à fermé : liquidités disponibles à 0. Déclarez un solde pour pouvoir ouvrir ou fermer.",
+            detail=(
+                "Statut verrouillé à fermé : liquidité CDF insuffisante par rapport "
+                f"au seuil ({fee:g} % des transactions réussies = {cover:g} CDF)."
+            ),
         )
-    # want_open=False sans liquidité : déjà (ou sera) forcé fermé — pas d’erreur.
+
+
+_LAST_SETTLED_DAY: str | None = None
+
+
+def maybe_run_daily_settlement(db: Session) -> None:
+    """À partir de 23h (Kinshasa) : retire le volume réussi du jour de la liquidité CDF."""
+    global _LAST_SETTLED_DAY
+    from sqlalchemy import and_, case, func, or_
+
+    from shared.models import Operation
+
+    now = datetime.now(KINSHASA)
+    if now.hour < 23:
+        return
+    today = now.strftime("%Y-%m-%d")
+    if _LAST_SETTLED_DAY == today:
+        return
+    raw = settings_map(db)
+    if raw.get("liquidity_last_settle_date") == today:
+        _LAST_SETTLED_DAY = today
+        return
+    cfg = settings_payload(db)
+    rate = float(cfg.get("usd_cdf_rate", 2880))
+    success = Operation.status == "completed"
+    volume_rows = (
+        db.query(
+            Operation.pdr_id,
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Operation.currency == "CDF", Operation.amount),
+                        else_=Operation.amount * rate,
+                    )
+                ),
+                0.0,
+            ),
+        )
+        .filter(
+            Operation.updated_at >= f"{today}T00:00:00",
+            Operation.updated_at < f"{today}T23:59:59.999999",
+            success,
+        )
+        .group_by(Operation.pdr_id)
+        .all()
+    )
+    volumes = {int(pdr_id): float(total or 0) for pdr_id, total in volume_rows}
+    fee = max(0.0, float(cfg.get("fee_percent", 1)))
+    for pdr in db.query(Pdr).all():
+        volume = round_money(volumes.get(pdr.id, 0.0), "CDF")
+        if volume > 1e-6:
+            pdr.cdf_declared = max(pdr.cdf_reserved, round_money(pdr.cdf_declared - volume, "CDF"))
+        cover = round_money(volume * (fee / 100.0), "CDF")
+        _force_closed_without_liquidity(db, pdr, metrics=(volume, cover, fee))
+    upsert_setting(db, "liquidity_last_settle_date", today)
+    _LAST_SETTLED_DAY = today
+
+
+def enrich_pdr_liquidity(
+    db: Session,
+    pdr: Pdr,
+    *,
+    include_password: bool = False,
+    mutate: bool = False,
+) -> dict:
+    """Lecture enrichie. Les mutations (settlement / fermeture) sont opt-in (CQS)."""
+    cfg = settings_payload(db)
+    metrics = _liquidity_metrics(db, pdr, cfg=cfg)
+    if mutate:
+        maybe_run_daily_settlement(db)
+        _force_closed_without_liquidity(db, pdr, metrics=metrics)
+    payload = pdr_dict(pdr, include_password=include_password)
+    volume, cover, fee = metrics
+    available = _available_amount(pdr, "CDF")
+    payload["day_success_volume_cdf"] = volume
+    payload["liquidity_cover_cdf"] = cover
+    payload["liquidity_cover_percent"] = fee
+    payload["can_toggle_open"] = available > cover + 1e-6
+    return payload
+
+
+def simulate_recharge(db: Session, pdr_id: int, network: str, amount: float, pin: str) -> dict:
+    """Simule une recharge Mobile Money → crédite le disponible CDF si succès."""
+    maybe_run_daily_settlement(db)
+    pdr = db.get(Pdr, pdr_id)
+    if not pdr:
+        raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
+    if network not in NETWORKS:
+        raise HTTPException(status_code=400, detail="Opérateur Mobile Money inconnu.")
+    value = round_money(amount, "CDF")
+    if value < 1000:
+        raise HTTPException(status_code=400, detail="Le montant minimum de recharge est 1 000 CDF.")
+    cleaned_pin = (pin or "").strip()
+    if len(cleaned_pin) < 4 or not cleaned_pin.isdigit():
+        raise HTTPException(status_code=400, detail="Saisissez un code PIN Mobile Money valide (4 à 6 chiffres).")
+    # Simulation : PIN 0000 = échec, sinon succès.
+    if cleaned_pin == "0000":
+        payload = enrich_pdr_liquidity(db, pdr, mutate=True)
+        payload["recharge"] = {
+            "ok": False,
+            "added_cdf": 0,
+            "network": network,
+            "message": "Transaction échouée. Aucun montant n’a été ajouté à votre liquidité.",
+        }
+        return payload
+    pdr.cdf_declared = round_money(pdr.cdf_declared + value, "CDF")
+    payload = enrich_pdr_liquidity(db, pdr, mutate=True)
+    payload["recharge"] = {
+        "ok": True,
+        "added_cdf": value,
+        "network": network,
+        "message": f"Recharge réussie : +{value:g} CDF ajoutés à votre liquidité.",
+    }
+    return payload
+
+
+def check_liquidity_policy(db: Session, pdr_id: int) -> dict:
+    pdr = db.get(Pdr, pdr_id)
+    if not pdr:
+        raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
+    return enrich_pdr_liquidity(db, pdr, mutate=True)
 
 
 def is_match(pdr: Pdr, kind: str, currency: str, amount: float, network: str | None) -> bool:
-    """Éligibilité recherche : actif, ouvert, réseau ; pas de filtre liquidité."""
-    if pdr.status != "active" or not pdr.is_open:
-        return False
-    if not _supports(pdr, network):
-        return False
-    if kind == "deposit":
-        return bool(pdr.accepts_deposits)
-    # Retrait : on ne filtre plus sur les liquidités déclarées/réservées.
-    return True
+    """Compat : délègue au noyau partagé `pdr_can_handle`."""
+    return pdr_can_handle(pdr, kind, currency, amount, network)
 
 
 def list_pdrs(
@@ -121,7 +307,7 @@ def get_pdr(db: Session, pdr_id: int, *, include_password: bool = False) -> dict
     pdr = db.get(Pdr, pdr_id)
     if not pdr:
         raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
-    return pdr_dict(pdr, include_password=include_password)
+    return enrich_pdr_liquidity(db, pdr, include_password=include_password)
 
 
 def search(
@@ -195,8 +381,8 @@ def create_pdr(db: Session, data: dict) -> dict:
     usd_declared = max(0, round_money(data.get("usd_declared") or 0, "USD"))
     cdf_declared = max(0, round_money(data.get("cdf_declared") or 0, "CDF"))
     want_open = bool(data.get("is_open", True))
-    # Pas de disponible → forcément fermé à la création.
-    if want_open and usd_declared <= 1e-6 and cdf_declared <= 1e-6:
+    # Pas de disponible CDF → forcément fermé à la création.
+    if want_open and cdf_declared <= 1e-6:
         want_open = False
     pdr = Pdr(
         code=code,
@@ -253,19 +439,15 @@ def update_pdr(db: Session, pdr_id: int, data: dict) -> dict:
         pdr.status = data["status"]
     if data.get("is_open") is not None:
         want_open = bool(data["is_open"])
-        _require_liquidity_to_toggle(pdr, want_open)
-        if _has_available_liquidity(pdr):
-            pdr.is_open = want_open
-        else:
-            pdr.is_open = False
+        _require_liquidity_to_toggle(db, pdr, want_open)
+        pdr.is_open = want_open if _can_toggle_open(db, pdr) else False
     if data.get("accepts_deposits") is not None:
         pdr.accepts_deposits = data["accepts_deposits"]
     if data.get("password"):
         plain = _validate_password(data["password"])
         pdr.password_hash = hash_password(plain)
         pdr.password_plain = plain
-    _force_closed_without_liquidity(db, pdr)
-    return pdr_dict(pdr, include_password=True)
+    return enrich_pdr_liquidity(db, pdr, include_password=True, mutate=True)
 
 
 def reset_password(db: Session, pdr_id: int, password: str | None = None) -> dict:
@@ -287,8 +469,6 @@ def deactivate(db: Session, pdr_id: int) -> dict:
         raise HTTPException(status_code=404, detail="Point de retrait introuvable.")
     pdr.status = "inactive"
     pdr.is_open = False
-    from services.operations.services import cancel_pending_for_pdr
-
     cancel_pending_for_pdr(db, pdr_id, "Point de retrait désactivé")
     return pdr_dict(pdr)
 
@@ -313,17 +493,12 @@ def update_availability(db: Session, pdr_id: int, data: dict) -> dict:
         pdr.networks = _networks(data["networks"])
     if data.get("is_open") is not None:
         want_open = bool(data["is_open"])
-        _require_liquidity_to_toggle(pdr, want_open)
+        _require_liquidity_to_toggle(db, pdr, want_open)
         was_open = bool(pdr.is_open)
-        # Sans disponible : verrouillé fermé. Avec disponible : ouvrir/fermer librement.
-        pdr.is_open = want_open if _has_available_liquidity(pdr) else False
+        pdr.is_open = want_open if _can_toggle_open(db, pdr) else False
         if was_open and not pdr.is_open:
-            from services.operations.services import cancel_pending_for_pdr
-
             cancel_pending_for_pdr(db, pdr_id, "Point de retrait fermé / déconnecté")
-    # Disponible à 0 → fermeture auto et verrouillage (ex. après baisse de déclaration).
-    _force_closed_without_liquidity(db, pdr)
-    return pdr_dict(pdr)
+    return enrich_pdr_liquidity(db, pdr, mutate=True)
 
 
 def _move(db: Session, pdr_id: int, currency: str, amount: float, action: str) -> dict:
@@ -377,7 +552,7 @@ def list_ratings(db: Session, pdr_id: int | None = None) -> list[dict]:
     query = db.query(Rating, Pdr.name).join(Pdr, Pdr.id == Rating.pdr_id)
     if pdr_id:
         query = query.filter(Rating.pdr_id == pdr_id)
-    rows = query.order_by(Rating.created_at.desc()).all()
+    rows = query.order_by(Rating.created_at.desc()).limit(50).all()
     return [rating_dict(rating, name) for rating, name in rows]
 
 
@@ -399,6 +574,7 @@ def add_rating(db: Session, pdr_id: int, data: dict) -> dict:
     db.add(rating)
     db.flush()
     count = db.query(func.count(Rating.id)).filter(Rating.pdr_id == pdr_id).scalar()
+    average = db.query(func.avg(Rating.stars)).filter(Rating.pdr_id == pdr_id).scalar()
     pdr.rating_count = int(count or 0)
-    pdr.rating_avg = float(data["stars"])
+    pdr.rating_avg = round(float(average or 0), 1)
     return rating_dict(rating, pdr.name) | {"rating_avg": pdr.rating_avg, "rating_count": pdr.rating_count}

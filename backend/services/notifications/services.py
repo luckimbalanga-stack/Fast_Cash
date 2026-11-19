@@ -25,11 +25,15 @@ def create(db: Session, data: dict) -> dict:
     return notification_dict(item)
 
 
+LIST_NOTIFICATIONS_LIMIT = 50
+
+
 def list_for(db: Session, audience: str, target_id: int) -> list[dict]:
     rows = (
         db.query(Notification)
         .filter(Notification.audience == audience, Notification.target_id == target_id)
         .order_by(Notification.created_at.desc())
+        .limit(LIST_NOTIFICATIONS_LIMIT)
         .all()
     )
     return [notification_dict(item) for item in rows]
