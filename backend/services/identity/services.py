@@ -41,7 +41,6 @@ def _issue_otp(db: Session, phone: str, purpose: str) -> dict:
     _invalidate_open_otps(db, phone, purpose)
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.add(OtpChallenge(phone=phone, purpose=purpose, code=_otp_hash(code), expires_at=minutes_from_now(5), consumed=False))
-    db.flush()  # remonte tout de suite une erreur de schéma (ex. colonne trop courte)
     payload = {
         "phone": phone,
         "purpose": purpose,
@@ -233,7 +232,6 @@ def enter_pdr(db: Session, phone_raw: str, password: str) -> dict:
             consumed=False,
         )
     )
-    db.flush()
     print(f"Fast-Cash — code de vérification PDR pour {phone} : {code}", flush=True)
     return {
         "phone": phone,

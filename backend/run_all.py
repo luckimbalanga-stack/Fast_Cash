@@ -1,6 +1,6 @@
 """Démarre les microservices Fast-Cash (local et Render).
 
-Deploy stamp: auth PDR par mot de passe (/auth/pdr/enter).
+Deploy stamp: fix OTP commit (get_db toujours commit, plus de rollback après flush).
 """
 
 import multiprocessing

@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -85,32 +85,20 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 
 def get_db():
-    """Session requête HTTP : commit seulement s’il y a eu des écritures (CQS léger).
+    """Session requête HTTP avec commit en fin de succès.
 
-    Important : après ``db.flush()``, les objets quittent ``session.new``.
-    On mémorise donc les flush pour ne pas rollback une écriture déjà envoyée
-    à la transaction (sinon OTP / tokens / etc. disparaissent silencieusement).
+    On commit toujours (même après lecture) : un ``flush()`` vide ``session.new``,
+    et un rollback conditionnel faisait disparaître OTP / tokens silencieusement.
+    Les lectures pures peuvent utiliser ``get_db_readonly``.
     """
     db = SessionLocal()
-    wrote = False
-
-    def _mark_flush(session, _flush_context):
-        nonlocal wrote
-        if session.new or session.dirty or session.deleted:
-            wrote = True
-
-    event.listen(db, "after_flush", _mark_flush)
     try:
         yield db
-        if wrote or db.new or db.dirty or db.deleted:
-            db.commit()
-        else:
-            db.rollback()
+        db.commit()
     except Exception:
         db.rollback()
         raise
     finally:
-        event.remove(db, "after_flush", _mark_flush)
         db.close()
 
 
