@@ -66,6 +66,9 @@ def root():
     }
 
 
+DEPLOY_STAMP = "otp-commit-fix-2026-11-19"
+
+
 @app.get("/api/health")
 def health():
     report = {}
@@ -75,7 +78,7 @@ def health():
             report[name] = response.status_code == 200
         except httpx.HTTPError:
             report[name] = False
-    payload = {"gateway": True, "services": report}
+    payload = {"gateway": True, "services": report, "deploy": DEPLOY_STAMP}
     # Render ne marque le service Live que si le health check répond 200.
     if not all(report.values()):
         return JSONResponse(payload, status_code=503)
