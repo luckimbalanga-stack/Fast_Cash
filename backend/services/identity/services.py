@@ -27,7 +27,18 @@ def _otp_hash(code: str) -> str:
     return hashlib.sha256(code.strip().encode()).hexdigest()
 
 
+def _invalidate_open_otps(db: Session, phone: str, purpose: str) -> None:
+    open_rows = (
+        db.query(OtpChallenge)
+        .filter(OtpChallenge.phone == phone, OtpChallenge.purpose == purpose, OtpChallenge.consumed.is_(False))
+        .all()
+    )
+    for row in open_rows:
+        row.consumed = True
+
+
 def _issue_otp(db: Session, phone: str, purpose: str) -> dict:
+    _invalidate_open_otps(db, phone, purpose)
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.add(OtpChallenge(phone=phone, purpose=purpose, code=_otp_hash(code), expires_at=minutes_from_now(5), consumed=False))
     db.flush()  # remonte tout de suite une erreur de schéma (ex. colonne trop courte)
@@ -113,19 +124,28 @@ def request_otp(db: Session, phone_raw: str, purpose: str, name: str | None = No
 
 
 def _consume_otp(db: Session, phone: str, purpose: str, code: str) -> None:
-    challenge = (
+    challenges = (
         db.query(OtpChallenge)
         .filter(OtpChallenge.phone == phone, OtpChallenge.purpose == purpose, OtpChallenge.consumed.is_(False))
         .order_by(OtpChallenge.id.desc())
-        .first()
+        .all()
     )
-    if not challenge:
+    if not challenges:
         raise HTTPException(status_code=400, detail="Demandez d'abord un code de vérification.")
-    if parse_iso(challenge.expires_at) < datetime.now(KINSHASA):
-        raise HTTPException(status_code=400, detail="Code expiré. Demandez un nouveau code.")
-    if _otp_hash(code) != challenge.code:
-        raise HTTPException(status_code=400, detail="Code incorrect.")
-    challenge.consumed = True
+    now = datetime.now(KINSHASA)
+    digest = _otp_hash(code)
+    for challenge in challenges:
+        expires = parse_iso(challenge.expires_at)
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=KINSHASA)
+        if expires < now:
+            challenge.consumed = True
+            continue
+        if digest != challenge.code:
+            raise HTTPException(status_code=400, detail="Code incorrect.")
+        challenge.consumed = True
+        return
+    raise HTTPException(status_code=400, detail="Code expiré. Demandez un nouveau code.")
 
 
 def verify_otp(db: Session, phone_raw: str, code: str, purpose: str, name: str | None, network: str | None) -> dict:
@@ -202,6 +222,7 @@ def enter_pdr(db: Session, phone_raw: str, password: str) -> dict:
         raise HTTPException(status_code=403, detail="Connexion PDR impossible.")
     if not (pdr.password_hash or "").strip() or not verify_password(password, pdr.password_hash):
         raise HTTPException(status_code=401, detail="Numéro ou mot de passe incorrect.")
+    _invalidate_open_otps(db, phone, "pdr")
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.add(
         OtpChallenge(

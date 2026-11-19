@@ -70,7 +70,7 @@ class AppController extends ChangeNotifier {
       pendingUpdate = _resolveUpdate(settings, installedVersion);
     } catch (_) {}
     try {
-      await _restoreSession().timeout(const Duration(seconds: 30));
+      await _restoreSession().timeout(const Duration(seconds: 120));
     } catch (_) {
       token = null;
       role = 'guest';

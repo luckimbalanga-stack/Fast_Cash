@@ -50,7 +50,10 @@ def now_iso() -> str:
 
 
 def parse_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value)
+    raw = datetime.fromisoformat(value)
+    if raw.tzinfo is None:
+        return raw.replace(tzinfo=KINSHASA)
+    return raw.astimezone(KINSHASA)
 
 
 def shift_iso(base: datetime, **kwargs) -> str:
