@@ -6,10 +6,13 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from shared.commission_ranges import commission_cut_cdf, parse_commission_ranges, validate_commission_ranges
 from shared.http import PDR_URL, internal_post, notify
 from shared.mobile_money import prepare_instruction
 from shared.models import Operation, Pdr, PhoneNumber, Setting, TimelineEvent, User
+from shared.operation_rules import amount_cdf_rounded
 from shared.serialize import operation_dict
+from shared.settings_repo import settings_payload
 from shared.utils import KINSHASA, make_reference, normalize_phone, now_iso, parse_iso, round_money
 
 
@@ -51,8 +54,29 @@ def _touch(db: Session, op: Operation, status: str, label: str) -> None:
     db.add(TimelineEvent(operation_id=op.id, status=status, label=label, created_at=op.updated_at))
 
 
-def _liquidity(path: str, op: Operation) -> None:
-    internal_post(PDR_URL, path, {"currency": op.currency, "amount": op.amount})
+def _commission_ranges(db: Session) -> list[dict[str, float]]:
+    payload = settings_payload(db)
+    ranges = payload.get("commission_ranges") or []
+    # settings_payload enrichit avec CDF/% — on re-normalise sur min/max/cut USD.
+    return validate_commission_ranges(
+        parse_commission_ranges(
+            [{"min_usd": row["min_usd"], "max_usd": row["max_usd"], "cut_usd": row["cut_usd"]} for row in ranges]
+        )
+    )
+
+
+def _liquidity(db: Session, path: str, op: Operation) -> None:
+    """Mouvements liquidité PDR toujours en CDF.
+
+    Retrait : coupe = plage de commission (Z USD → CDF), pas le montant retiré.
+    Dépôt / autres : montant converti en CDF.
+    """
+    rate = float(_setting(db, "usd_cdf_rate", "2880"))
+    if op.type == "withdrawal":
+        amount = commission_cut_cdf(_commission_ranges(db), op.amount, op.currency, rate)
+    else:
+        amount = amount_cdf_rounded(op, rate)
+    internal_post(PDR_URL, path, {"currency": "CDF", "amount": amount})
 
 
 def _aware(value: datetime) -> datetime:
@@ -119,7 +143,7 @@ def maybe_expire(db: Session, op: Operation, *, offer_seconds: int | None = None
             op.token_expires_at = None
             if not op.reserved:
                 try:
-                    _liquidity(f"/pdr/{op.pdr_id}/liquidity/reserve", op)
+                    _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/reserve", op)
                     op.reserved = True
                 except Exception:
                     pass
@@ -325,7 +349,7 @@ def accept(db: Session, pdr_id: int, operation_id: int) -> dict:
     if op.status != "pending":
         raise HTTPException(status_code=409, detail="Cette demande n'est plus en attente.")
     if op.type == "withdrawal":
-        _liquidity(f"/pdr/{op.pdr_id}/liquidity/reserve", op)
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/reserve", op)
         op.reserved = True
         _touch(db, op, "pin_required", "Demande acceptée, code PIN requis")
         notify(
@@ -365,13 +389,7 @@ def refuse(db: Session, pdr_id: int, operation_id: int) -> dict:
     if op.status != "pending":
         raise HTTPException(status_code=409, detail="Cette demande n'est plus en attente.")
     _touch(db, op, "refused", "Demande refusée par le PDR")
-    notify(
-        "user",
-        op.user_id,
-        "Demande refusée",
-        f"Votre demande {op.reference} a été refusée. Vous pouvez en relancer une vers un autre point disponible.",
-        op.id,
-    )
+    # Pas de notification utilisateur sur refus / rejet — le chaînage mobile enchaîne.
     return present(db, op)
 
 
@@ -443,7 +461,7 @@ def cancel(db: Session, role: str, ident: int, operation_id: int) -> dict:
         raise HTTPException(status_code=409, detail="Cette opération ne peut plus être annulée.")
     was_offer = op.status == "pending"
     if op.reserved:
-        _liquidity(f"/pdr/{op.pdr_id}/liquidity/release", op)
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/release", op)
         op.reserved = False
     if op.token_status == "active":
         op.token_status = "cancelled"
@@ -495,22 +513,15 @@ def redeem(db: Session, pdr_id: int, code: str) -> dict:
         ):
             op.token_status = "cancelled"
             _touch(db, op, "cancelled", "Ticket non validé — dépôt annulé")
-            notify(
-                "user",
-                op.user_id,
-                "Dépôt annulé",
-                f"Le ticket {op.reference} n’a pas pu être validé au {op.pdr_name}.",
-                op.id,
-            )
             notify("pdr", op.pdr_id, "Dépôt annulé", f"Ticket {op.reference} invalide — opération annulée.", op.id)
             raise HTTPException(status_code=409, detail="Ticket non validé — dépôt annulé.")
         raise HTTPException(status_code=409, detail=preview.get("error") or "Jeton invalide.")
 
     if op.type == "withdrawal":
-        _liquidity(f"/pdr/{op.pdr_id}/liquidity/consume", op)
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/consume", op)
         op.reserved = False
     else:
-        _liquidity(f"/pdr/{op.pdr_id}/liquidity/receive", op)
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/receive", op)
     op.token_status = "used"
     op.token_expires_at = None
     op.mm_status = "session_closed"

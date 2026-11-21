@@ -7,6 +7,12 @@ from fastapi import HTTPException
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from shared.commission_ranges import (
+    commission_cut_cdf,
+    dumps_ranges,
+    parse_commission_ranges,
+    validate_commission_ranges,
+)
 from shared.models import AdminUser, Operation, Pdr, PhoneNumber, User
 from shared.operation_rules import amount_cdf, is_pdr_success
 from shared.serialize import admin_dict, user_dict
@@ -72,6 +78,11 @@ def update_settings(db: Session, data: dict) -> dict:
         current["app_download_url"] = value
     if data.get("app_update_message") is not None:
         current["app_update_message"] = str(data["app_update_message"]).strip() or APP_SETTING_DEFAULTS["app_update_message"]
+    if data.get("commission_ranges") is not None:
+        ranges = validate_commission_ranges(parse_commission_ranges(data["commission_ranges"]))
+        if not ranges:
+            raise HTTPException(status_code=400, detail="Ajoutez au moins une plage de commission.")
+        _upsert_setting(db, "commission_ranges", dumps_ranges(ranges))
     for key in (
         "fee_percent",
         "token_minutes",
@@ -83,7 +94,8 @@ def update_settings(db: Session, data: dict) -> dict:
         "app_download_url",
         "app_update_message",
     ):
-        _upsert_setting(db, key, str(current[key]))
+        if key in current:
+            _upsert_setting(db, key, str(current[key]))
     return settings_payload(db)
 
 
@@ -229,11 +241,21 @@ def charts(
     ]
     top = sorted(ranking.values(), key=lambda item: -item["count"])[:5]
 
+    # Plages USD (sans champs d’affichage) pour recalculer les coupes liquidité.
+    ranges = validate_commission_ranges(
+        parse_commission_ranges(
+            [
+                {"min_usd": row["min_usd"], "max_usd": row["max_usd"], "cut_usd": row["cut_usd"]}
+                for row in (cfg.get("commission_ranges") or [])
+            ]
+        )
+    )
+
     pdr_days = [start + timedelta(days=offset) for offset in range(span + 1)]
     pdr_daily = []
     for day in pdr_days:
         key = day.isoformat()
-        withdrawals = 0.0
+        cuts = 0.0
         deposits = 0.0
         count = 0
         for op in by_day.get(key, []):
@@ -241,17 +263,22 @@ def charts(
                 continue
             if network_key and op.network != network_key:
                 continue
-            amount = amount_cdf(op, rate)
             if op.type == "withdrawal":
-                withdrawals += amount
+                try:
+                    cuts += commission_cut_cdf(ranges, op.amount, op.currency, rate)
+                except Exception:
+                    # Hors plage historique : approx. 0 pour ne pas fausser le graphique.
+                    pass
             else:
-                deposits += amount
+                deposits += amount_cdf(op, rate)
             count += 1
         pdr_daily.append({
             "date": key,
-            "withdrawals": round_money(withdrawals, "CDF"),
+            # Compat front : "withdrawals" = coupes commission CDF (pas le volume retiré).
+            "withdrawals": round_money(cuts, "CDF"),
+            "cuts": round_money(cuts, "CDF"),
             "deposits": round_money(deposits, "CDF"),
-            "total": round_money(withdrawals + deposits, "CDF"),
+            "total": round_money(cuts + deposits, "CDF"),
             "count": count,
         })
 

@@ -18,13 +18,16 @@ class MainActivity : FlutterActivity() {
     private var pendingCallPayload: HashMap<String, Any?>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Active les flags AVANT le premier frame si c’est un appel.
-        if (intent?.getBooleanExtra(IncomingCallNotifier.EXTRA_CALL, false) == true ||
+        // Comme WhatsApp : pas d’overlay écran verrouillé sauf appel entrant.
+        val isCall = intent?.getBooleanExtra(IncomingCallNotifier.EXTRA_CALL, false) == true ||
             intent?.action == IncomingCallNotifier.ACTION_INCOMING
-        ) {
+        if (isCall) {
             enableIncomingCallWindow()
         }
         super.onCreate(savedInstanceState)
+        if (!isCall) {
+            clearIncomingCallWindow()
+        }
         handleIncomingIntent(intent)
     }
 

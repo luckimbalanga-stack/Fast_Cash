@@ -401,6 +401,42 @@ export class AppController {
     })
   }
 
+  saveCommissionRanges(rows) {
+    const ranges = []
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]
+      const minUsd = Number(String(row.min_usd ?? '').replace(/\s/g, '').replace(',', '.'))
+      const maxUsd = Number(String(row.max_usd ?? '').replace(/\s/g, '').replace(',', '.'))
+      const cutUsd = Number(String(row.cut_usd ?? '').replace(/\s/g, '').replace(',', '.'))
+      if (![minUsd, maxUsd, cutUsd].every(Number.isFinite) || minUsd <= 0 || maxUsd <= 0 || cutUsd <= 0) {
+        this.setState({ error: `Plage ${index + 1} : indiquez X, Y et Z > 0.` })
+        return Promise.resolve()
+      }
+      if (maxUsd <= minUsd) {
+        this.setState({ error: `Plage ${index + 1} : Y doit être supérieur à X.` })
+        return Promise.resolve()
+      }
+      ranges.push({ min_usd: minUsd, max_usd: maxUsd, cut_usd: cutUsd })
+    }
+    if (!ranges.length) {
+      this.setState({ error: 'Ajoutez au moins une plage de commission.' })
+      return Promise.resolve()
+    }
+    const ordered = [...ranges].sort((a, b) => a.min_usd - b.min_usd || a.max_usd - b.max_usd)
+    for (let i = 1; i < ordered.length; i += 1) {
+      if (ordered[i].min_usd <= ordered[i - 1].max_usd) {
+        this.setState({
+          error: `Chevauchement entre ${ordered[i - 1].min_usd}–${ordered[i - 1].max_usd} et ${ordered[i].min_usd}–${ordered[i].max_usd} USD.`,
+        })
+        return Promise.resolve()
+      }
+    }
+    return this.run(async () => {
+      const settings = await this.model.saveSettings(this.token, { commission_ranges: ranges })
+      this.setState({ settings, banner: settings.banner || '', notice: 'Plages de commission enregistrées.' })
+    })
+  }
+
   createMember(input) {
     const name = input.name.trim()
     const email = input.email.trim().toLowerCase()

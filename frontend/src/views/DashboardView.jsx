@@ -155,9 +155,9 @@ function VolumeChart({ days }) {
     <article className="card">
       <div className="chart-head">
         <div>
-          <h3>Volume des opérations</h3>
+          <h3>Retraits & dépôts (évolution)</h3>
           <p className="chart-total">{formatMoney(total, currency)}</p>
-          <p className="muted">30 derniers jours, montants en {currency}. Faites défiler pour changer de devise.</p>
+          <p className="muted">30 derniers jours — retraits et dépôts en {currency}. Basculez CDF / USD pour suivre l’évolution par devise.</p>
         </div>
         <div className="chart-tools">
           <div className="currency-switch" role="tablist" aria-label="Devise du graphique">
@@ -206,9 +206,9 @@ function PdrVolumeChart({ days }) {
     <article className="card">
       <div className="chart-head">
         <div>
-          <h3>Transactions PDR (CDF)</h3>
+          <h3>Coupes liquidité PDR (CDF)</h3>
           <p className="chart-total">{formatMoney(total, 'CDF')}</p>
-          <p className="muted">Volume réussi côté points de retrait, converti en CDF. Filtrez par dates et opérateur.</p>
+          <p className="muted">Évolution des commissions coupées dans la liquidité PDR (plages → CDF). Filtrez par dates et opérateur.</p>
         </div>
         <div className="chart-tools">
           <button
@@ -236,7 +236,7 @@ function PdrVolumeChart({ days }) {
       ) : (
         <>
           <LineChart days={chartDays} currency="CDF" />
-          <p className="legend"><i className="dot night" /> Dépôts <i className="dot brand" /> Retraits</p>
+          <p className="legend"><i className="dot night" /> Dépôts reçus <i className="dot brand" /> Coupes commission</p>
         </>
       )}
     </article>

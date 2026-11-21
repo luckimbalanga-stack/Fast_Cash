@@ -13,6 +13,25 @@ import '../services/pdr_call_alert.dart';
 import '../services/pdr_watchdog.dart';
 import '../views/pdr/incoming_call.dart';
 
+/// Demande utilisateur en cours d’appel PDR (reprise depuis les notifications).
+class ActiveDispatch {
+  ActiveDispatch({
+    required this.type,
+    required this.points,
+    required this.amount,
+    required this.currency,
+    this.cursor = 0,
+    this.operationId,
+  });
+
+  final String type;
+  final List<PdrPoint> points;
+  final double amount;
+  final String currency;
+  int cursor;
+  int? operationId;
+}
+
 class AppController extends ChangeNotifier {
   AppController({ApiClient? api}) : api = api ?? ApiClient();
 
@@ -36,6 +55,7 @@ class AppController extends ChangeNotifier {
   AppUpdateInfo? pendingUpdate;
   bool updatePromptShown = false;
   bool sessionReady = false;
+  ActiveDispatch? activeDispatch;
 
   static const _kToken = 'fc_token';
   static const _kRole = 'fc_role';
@@ -43,6 +63,27 @@ class AppController extends ChangeNotifier {
   static const _kPhoneId = 'fc_phone_id';
 
   int get unread => notifications.where((item) => !item.isRead).length;
+
+  bool get hasActiveDispatch {
+    final active = activeDispatch;
+    if (active == null) return false;
+    final id = active.operationId;
+    if (id == null) return true;
+    final op = operationById(id);
+    if (op == null) return true;
+    return op.status == 'pending' || op.status == 'pin_required';
+  }
+
+  void setActiveDispatch(ActiveDispatch? value) {
+    activeDispatch = value;
+    notifyListeners();
+  }
+
+  void clearActiveDispatch() {
+    if (activeDispatch == null) return;
+    activeDispatch = null;
+    notifyListeners();
+  }
 
   PhoneNumber? get activePhone {
     final numbers = user?.numbers ?? [];
@@ -425,7 +466,7 @@ class AppController extends ChangeNotifier {
 
   int get pdrOfferSeconds => settings.pdrOfferSeconds.clamp(5, 120);
 
-  /// Compte les PDR ouverts dans un rayon (fermés ignorés, sans filtre liquidité).
+  /// Compte les PDR dans le rayon : total (tous) et ouverts.
   Future<({int total, int open})> scanZonePdrs({int? maxM}) async {
     final radius = maxM ?? searchRadiusM;
     const kinLat = -4.3038;
@@ -445,21 +486,15 @@ class AppController extends ChangeNotifier {
       }
     } catch (_) {}
     await loadDirectory();
-    // Plus proche d’abord parmi les ouverts uniquement.
-    final openInRadius = <({PdrPoint point, double meters})>[];
+    var total = 0;
+    var open = 0;
     for (final point in directory) {
-      if (!point.isOpen) continue;
       final meters = Geolocator.distanceBetween(lat, lng, point.lat, point.lng);
       if (meters > radius) continue;
-      openInRadius.add((point: point, meters: meters));
+      total += 1;
+      if (point.isOpen) open += 1;
     }
-    openInRadius.sort((a, b) {
-      final byDistance = a.meters.compareTo(b.meters);
-      if (byDistance != 0) return byDistance;
-      return b.point.ratingAvg.compareTo(a.point.ratingAvg);
-    });
-    final open = openInRadius.length;
-    return (total: open, open: open);
+    return (total: total, open: open);
   }
 
   Future<CashOperation> createOperation({required int pdrId, required String phone, required double amount, required String currency, required String type}) async {
@@ -602,6 +637,7 @@ class AppController extends ChangeNotifier {
     notifications = [];
     ratings = [];
     selectedPhoneId = null;
+    activeDispatch = null;
     notifyListeners();
     try {
       appNavigatorKey.currentState?.popUntil((route) => route.isFirst);

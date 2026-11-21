@@ -404,11 +404,31 @@ class _TimelineChip extends StatelessWidget {
 }
 
 class DispatchPage extends StatefulWidget {
-  const DispatchPage({super.key, required this.type, required this.points, required this.amount, required this.currency});
+  const DispatchPage({
+    super.key,
+    required this.type,
+    required this.points,
+    required this.amount,
+    required this.currency,
+    this.initialCursor = 0,
+    this.initialOperationId,
+  });
+
   final String type;
   final List<PdrPoint> points;
   final double amount;
   final String currency;
+  final int initialCursor;
+  final int? initialOperationId;
+
+  factory DispatchPage.fromActive(ActiveDispatch active) => DispatchPage(
+        type: active.type,
+        points: active.points,
+        amount: active.amount,
+        currency: active.currency,
+        initialCursor: active.cursor,
+        initialOperationId: active.operationId,
+      );
 
   @override
   State<DispatchPage> createState() => _DispatchPageState();
@@ -416,7 +436,7 @@ class DispatchPage extends StatefulWidget {
 
 class _DispatchPageState extends State<DispatchPage> {
   AppController? _controller;
-  int _cursor = 0;
+  late int _cursor;
   int? _operationId;
   int? _handledSkipId;
   bool _advancing = false;
@@ -424,6 +444,7 @@ class _DispatchPageState extends State<DispatchPage> {
   bool _exhausted = false;
   bool _popupShown = false;
   bool _leaving = false;
+  bool _cancelling = false;
   String? _error;
   Timer? _timeout;
   Timer? _fastPoll;
@@ -433,11 +454,50 @@ class _DispatchPageState extends State<DispatchPage> {
   @override
   void initState() {
     super.initState();
+    _cursor = widget.initialCursor;
+    _operationId = widget.initialOperationId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_started) return;
       _started = true;
+      _syncActiveDispatch();
+      if (_operationId != null) {
+        final existing = _controller?.operationById(_operationId!);
+        if (existing != null && existing.status == 'pending') {
+          _armTimeout(_operationId!);
+          return;
+        }
+        if (existing != null && existing.status == 'pin_required') {
+          setState(() {});
+          return;
+        }
+        if (existing != null && existing.status == 'payment_confirmed') {
+          _leaveTo(TokenPage(operation: existing));
+          return;
+        }
+        if (existing != null && (existing.status == 'cash_delivered' || existing.status == 'completed')) {
+          _leaveTo(_ReceivedPage(operation: existing));
+          return;
+        }
+        if (existing != null && (existing.status == 'cancelled' || existing.status == 'refused')) {
+          _cursor += 1;
+          _operationId = null;
+        }
+      }
       _offerNext();
     });
+  }
+
+  void _syncActiveDispatch() {
+    _controller?.setActiveDispatch(
+      ActiveDispatch(
+        type: widget.type,
+        points: widget.points,
+        amount: widget.amount,
+        currency: widget.currency,
+        cursor: _cursor,
+        operationId: _operationId,
+      ),
+    );
   }
 
   @override
@@ -489,11 +549,30 @@ class _DispatchPageState extends State<DispatchPage> {
     _leaving = true;
     _clearTimeout();
     _fastPoll?.cancel();
+    _controller?.clearActiveDispatch();
     _controller?.resumeSync();
     Future<void>.delayed(delay, () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => page));
     });
+  }
+
+  Future<void> _cancelRequest() async {
+    if (_cancelling || _leaving) return;
+    setState(() => _cancelling = true);
+    _clearTimeout();
+    final currentId = _operationId;
+    try {
+      if (currentId != null) {
+        final operation = _controller?.operationById(currentId);
+        if (operation == null || operation.status == 'pending' || operation.status == 'pin_required') {
+          await _controller?.postAction(currentId, 'cancel');
+        }
+      }
+    } catch (_) {}
+    _controller?.clearActiveDispatch();
+    if (!mounted) return;
+    Navigator.of(context).pop();
   }
 
   bool _shouldAdvancePast(CashOperation operation) {
@@ -543,6 +622,7 @@ class _DispatchPageState extends State<DispatchPage> {
     }
     if (!mounted) return;
     _cursor += 1;
+    _syncActiveDispatch();
     await _offerNext();
   }
 
@@ -583,6 +663,7 @@ class _DispatchPageState extends State<DispatchPage> {
     }
     if (_cursor >= widget.points.length) {
       setState(() => _exhausted = true);
+      _controller?.clearActiveDispatch();
       WidgetsBinding.instance.addPostFrameCallback((_) => _showNoPdrPopup());
       return;
     }
@@ -601,6 +682,7 @@ class _DispatchPageState extends State<DispatchPage> {
         _operationId = created.id;
         _error = null;
       });
+      _syncActiveDispatch();
       if (created.status == 'pending') {
         _armTimeout(created.id);
       }
@@ -608,6 +690,7 @@ class _DispatchPageState extends State<DispatchPage> {
       if (!mounted) return;
       setState(() => _error = error is ApiException ? error.message : 'La demande n’a pas pu être envoyée.');
       _cursor += 1;
+      _syncActiveDispatch();
       _advancing = false;
       await _offerNext();
       return;
@@ -630,42 +713,60 @@ class _DispatchPageState extends State<DispatchPage> {
     }
     final waitingPin = operation?.status == 'pin_required';
     final buffering = !_exhausted && _error == null && !waitingPin;
-    return Scaffold(
-      appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-        child: Column(children: [
-          BackgroundActionStrip(
-            type: widget.type,
-            status: operation?.status,
-            busy: buffering || waitingPin,
-          ),
-          const Spacer(),
-          if (buffering) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
-          if (waitingPin) const Icon(Icons.lock_outline_rounded, size: 64, color: AppColors.brand),
-          const SizedBox(height: 22),
-          Text(
-            _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Demande en cours',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _error ??
-                (_exhausted
-                    ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
-                    : waitingPin
-                        ? 'Un point de retrait a accepté. Saisissez votre code PIN à 4 chiffres pour continuer.'
-                        : 'Chaque point dispose de $_waitSeconds secondes pour valider. Sinon la demande passe au suivant.'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.muted, height: 1.4),
-          ),
-          const Spacer(),
-          if (waitingPin && operation != null)
-            PrimaryButton(label: 'Saisir le code PIN', icon: Icons.lock_outline_rounded, onPressed: () => showPinDialog(context, operation)),
-          if (_error != null && !_exhausted)
-            PrimaryButton(label: 'Retour', onPressed: () => Navigator.pop(context)),
-        ]),
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) return;
+        // Retour : la demande continue en arrière-plan (reprise via notifs).
+        if (!_leaving && !_exhausted) _syncActiveDispatch();
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
+        body: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          child: Column(children: [
+            BackgroundActionStrip(
+              type: widget.type,
+              status: operation?.status,
+              busy: buffering || waitingPin,
+            ),
+            const Spacer(),
+            if (buffering) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
+            if (waitingPin) const Icon(Icons.lock_outline_rounded, size: 64, color: AppColors.brand),
+            const SizedBox(height: 22),
+            Text(
+              _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Demande en cours',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error ??
+                  (_exhausted
+                      ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
+                      : waitingPin
+                          ? 'Un point de retrait a accepté. Saisissez votre code PIN à 4 chiffres pour continuer.'
+                          : 'Chaque point dispose de $_waitSeconds secondes pour valider. Sinon la demande passe au suivant.'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.muted, height: 1.4),
+            ),
+            const Spacer(),
+            if (waitingPin && operation != null)
+              PrimaryButton(label: 'Saisir le code PIN', icon: Icons.lock_outline_rounded, onPressed: () => showPinDialog(context, operation)),
+            if (!_exhausted && _error == null) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _cancelling ? null : () => runAction(context, _cancelRequest),
+                child: Text(
+                  _cancelling ? 'Annulation…' : 'Annuler la demande',
+                  style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+            if (_error != null && !_exhausted)
+              PrimaryButton(label: 'Retour', onPressed: () => Navigator.pop(context)),
+          ]),
+        ),
       ),
     );
   }
@@ -1135,8 +1236,16 @@ class TokenPage extends StatelessWidget {
             ])),
             const SizedBox(height: 16),
             Row(children: [
-              Expanded(child: GhostButton(label: 'Itinéraire', icon: Icons.near_me_outlined, onPressed: () => openRoute(context, live))),
-              const SizedBox(width: 8),
+              if (NotificationFeed.destinationEnabled(live.status)) ...[
+                Expanded(
+                  child: GhostButton(
+                    label: 'Itinéraire',
+                    icon: Icons.near_me_outlined,
+                    onPressed: () => openRoute(context, live),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               Expanded(child: PrimaryButton(label: 'Voir détails', icon: Icons.receipt_long_outlined, onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OperationDetailPage(operationId: live.id))))),
             ]),
             const SizedBox(height: 12),

@@ -5,6 +5,13 @@ from threading import Lock
 
 from sqlalchemy.orm import Session
 
+from shared.commission_ranges import (
+    DEFAULT_COMMISSION_RANGES,
+    dumps_ranges,
+    parse_commission_ranges,
+    ranges_with_display,
+    validate_commission_ranges,
+)
 from shared.models import Setting
 
 APP_SETTING_DEFAULTS = {
@@ -13,6 +20,7 @@ APP_SETTING_DEFAULTS = {
     "app_download_url": "",
     "app_update_message": "Une nouvelle version de Fast-Cash est disponible. Téléchargez-la pour continuer.",
     "pdr_offer_seconds": "30",
+    "commission_ranges": dumps_ranges(DEFAULT_COMMISSION_RANGES),
 }
 
 _CACHE_TTL_S = 20.0
@@ -59,10 +67,18 @@ def settings_payload(db: Session) -> dict:
         if _cache_payload is not None and (now - _cache_at) < _CACHE_TTL_S:
             return dict(_cache_payload)
     raw = settings_map(db)
+    rate = float(raw.get("usd_cdf_rate", "2880"))
+    ranges_raw = raw.get("commission_ranges", APP_SETTING_DEFAULTS["commission_ranges"])
+    try:
+        ranges = validate_commission_ranges(parse_commission_ranges(ranges_raw))
+    except Exception:
+        ranges = list(DEFAULT_COMMISSION_RANGES)
+    if not ranges:
+        ranges = list(DEFAULT_COMMISSION_RANGES)
     payload = {
         "fee_percent": float(raw.get("fee_percent", "1")),
         "token_minutes": int(float(raw.get("token_minutes", "30"))),
-        "usd_cdf_rate": float(raw.get("usd_cdf_rate", "2880")),
+        "usd_cdf_rate": rate,
         "search_radius_m": int(float(raw.get("search_radius_m", "1000"))),
         "pdr_offer_seconds": int(float(raw.get("pdr_offer_seconds", APP_SETTING_DEFAULTS.get("pdr_offer_seconds", "30")))),
         "banner": raw.get("banner", ""),
@@ -70,6 +86,7 @@ def settings_payload(db: Session) -> dict:
         "app_min_version": raw.get("app_min_version", APP_SETTING_DEFAULTS["app_min_version"]),
         "app_download_url": raw.get("app_download_url", APP_SETTING_DEFAULTS["app_download_url"]),
         "app_update_message": raw.get("app_update_message", APP_SETTING_DEFAULTS["app_update_message"]),
+        "commission_ranges": ranges_with_display(ranges, rate),
     }
     with _cache_lock:
         _cache_payload = dict(payload)

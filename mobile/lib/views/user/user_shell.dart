@@ -129,7 +129,13 @@ class _HomePageState extends State<HomePage> {
             const Spacer(),
             IconButton(
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsPage())),
-              icon: Badge(isLabelVisible: controller.unread > 0, label: Text('${controller.unread}'), child: const Icon(Icons.notifications_none_rounded)),
+              icon: Badge(
+                isLabelVisible: controller.unread > 0 || controller.hasActiveDispatch,
+                label: controller.hasActiveDispatch
+                    ? const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.6, color: Colors.white))
+                    : Text('${controller.unread}'),
+                child: const Icon(Icons.notifications_none_rounded),
+              ),
             ),
           ],
         ),

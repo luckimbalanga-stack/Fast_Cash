@@ -384,8 +384,14 @@ class OperationDetailPage extends StatelessWidget {
               ),
             ],
           ],
-          const SizedBox(height: 16),
-          GhostButton(label: 'Itinéraire', icon: Icons.near_me_outlined, onPressed: () => openRoute(context, operation)),
+          if (NotificationFeed.destinationEnabled(operation.status)) ...[
+            const SizedBox(height: 16),
+            GhostButton(
+              label: 'Itinéraire',
+              icon: Icons.near_me_outlined,
+              onPressed: () => openRoute(context, operation),
+            ),
+          ],
           const SizedBox(height: 20),
           const Text('Chronologie', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
           const SizedBox(height: 8),
@@ -690,10 +696,56 @@ class NotificationsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final active = controller.hasActiveDispatch ? controller.activeDispatch : null;
     return Scaffold(
       appBar: AppBar(title: const Text('Notifications')),
       body: NotificationFeed(
         items: controller.notifications,
+        resolveOperation: controller.operationById,
+        onOpenDestination: (operation) => openRoute(context, operation),
+        activeDispatchBanner: active == null
+            ? null
+            : Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(22),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => DispatchPage.fromActive(active)),
+                    );
+                  },
+                  child: Ink(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: AppColors.brandSoft),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 3, color: AppColors.brand),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Demande en cours', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.night)),
+                              SizedBox(height: 2),
+                              Text('Touchez pour revenir à l’appel des PDR', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: AppColors.brand),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
         onReadAll: () => runAction(context, controller.markAllRead),
         onOpen: (item) async {
           if (!item.isRead) await runAction(context, () => controller.markRead(item.id));

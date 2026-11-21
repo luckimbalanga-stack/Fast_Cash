@@ -31,18 +31,32 @@ class FastCashMark extends StatelessWidget {
 }
 
 class NotificationFeed extends StatelessWidget {
-  const NotificationFeed({super.key, required this.items, required this.onOpen, required this.onReadAll});
+  const NotificationFeed({
+    super.key,
+    required this.items,
+    required this.onOpen,
+    required this.onReadAll,
+    this.resolveOperation,
+    this.onOpenDestination,
+    this.activeDispatchBanner,
+  });
 
   final List<AppNotification> items;
   final ValueChanged<AppNotification> onOpen;
   final VoidCallback onReadAll;
+  final CashOperation? Function(int operationId)? resolveOperation;
+  final ValueChanged<CashOperation>? onOpenDestination;
+  final Widget? activeDispatchBanner;
+
+  static bool destinationEnabled(String status) =>
+      status == 'accepted' || status == 'pin_required' || status == 'payment_confirmed';
 
   @override
   Widget build(BuildContext context) {
     final unread = items.where((item) => !item.isRead).length;
     return ColoredBox(
       color: AppColors.mist,
-      child: items.isEmpty ? _empty() : _list(unread),
+      child: items.isEmpty && activeDispatchBanner == null ? _empty() : _list(unread),
     );
   }
 
@@ -58,7 +72,7 @@ class NotificationFeed extends StatelessWidget {
           SizedBox(height: 18),
           Text('Aucune notification', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.night)),
           SizedBox(height: 8),
-          Text('Les acceptations, refus et jetons de vos opérations s’afficheront ici.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, height: 1.4)),
+          Text('Les acceptations et jetons de vos opérations s’afficheront ici.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, height: 1.4)),
         ]),
       ),
     );
@@ -72,6 +86,10 @@ class NotificationFeed extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
+        if (activeDispatchBanner != null) ...[
+          activeDispatchBanner!,
+          const SizedBox(height: 12),
+        ],
         Container(
           margin: const EdgeInsets.only(bottom: 14),
           padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
@@ -105,6 +123,9 @@ class NotificationFeed extends StatelessWidget {
 
   Widget _card(AppNotification item) {
     final tone = _tone(item.title);
+    final operation = item.operationId == null ? null : resolveOperation?.call(item.operationId!);
+    final showDestination = operation != null && destinationEnabled(operation.status);
+    final destinationActive = showDestination;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -143,6 +164,29 @@ class NotificationFeed extends StatelessWidget {
                         Text(item.body, style: const TextStyle(color: AppColors.ink, height: 1.35)),
                         const SizedBox(height: 8),
                         Text(_when(item.createdAt), style: const TextStyle(color: AppColors.muted, fontSize: 12, fontWeight: FontWeight.w600)),
+                        if (showDestination) ...[
+                          const SizedBox(height: 10),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: destinationActive && onOpenDestination != null
+                                  ? () => onOpenDestination!(operation)
+                                  : null,
+                              icon: Icon(
+                                Icons.near_me_outlined,
+                                size: 18,
+                                color: destinationActive ? AppColors.brand : AppColors.muted,
+                              ),
+                              label: Text(
+                                'Destination',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: destinationActive ? AppColors.brand : AppColors.muted,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ])),
                     ]),
                   ),
@@ -451,18 +495,18 @@ Future<void> runAction(BuildContext context, Future<void> Function() action) asy
 }
 
 Future<void> showZoneScanResult(BuildContext context, {required int total, required int open, int? radiusM}) {
-  final openCount = open > 0 ? open : total;
-  final openLabel = openCount <= 1 ? '$openCount PDR ouvert' : '$openCount PDR ouverts';
   final radiusLabel = formatRadiusLabel(radiusM ?? 1000);
+  final totalLabel = total <= 1 ? '$total PDR est disponible' : '$total PDR sont disponibles';
+  final openLabel = open <= 1 ? '$open est ouvert' : '$open sont ouverts';
   return showDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: const Text('Scan de zone', style: TextStyle(fontWeight: FontWeight.w800)),
       content: Text(
-        openCount == 0
-            ? 'Aucun PDR ouvert trouvé dans un rayon de $radiusLabel autour de vous.'
-            : '$openLabel dans un rayon de $radiusLabel (du plus proche au plus éloigné).',
+        total == 0
+            ? 'Aucun PDR trouvé dans un rayon de $radiusLabel autour de vous.'
+            : '$totalLabel dans votre zone dont $openLabel.',
         style: const TextStyle(color: AppColors.muted, height: 1.4),
       ),
       actions: [

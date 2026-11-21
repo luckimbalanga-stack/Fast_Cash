@@ -16,6 +16,12 @@ class AdminPatch(BaseModel):
     status: str | None = None
 
 
+class CommissionRangeWrite(BaseModel):
+    min_usd: float
+    max_usd: float
+    cut_usd: float
+
+
 class SettingsWrite(BaseModel):
     fee_percent: float | None = None
     token_minutes: int | None = None
@@ -26,6 +32,7 @@ class SettingsWrite(BaseModel):
     app_min_version: str | None = None
     app_download_url: str | None = None
     app_update_message: str | None = None
+    commission_ranges: list[CommissionRangeWrite] | None = None
 
 
 class UserImportRow(BaseModel):
