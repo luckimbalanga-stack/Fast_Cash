@@ -339,7 +339,7 @@ def create_operation(db: Session, user_id: int, data: dict) -> dict:
         f"{user.name} demande {verb} de {amount:g} {currency} · {number.phone}. Validez ou refusez sous {offer_seconds} s.",
         op.id,
     )
-    # Utilisateur : pas de notif à l’envoi — seulement accepté / refusé / terminé.
+    # Utilisateur : pas de notif à l’envoi — seulement accepté / terminé.
     return present(db, op)
 
 
@@ -427,7 +427,7 @@ def authorize(db: Session, user_id: int, operation_id: int, pin: str) -> dict:
         op.token_expires_at = None
         _touch(db, op, "payment_confirmed", "Paiement confirmé")
         notify("pdr", op.pdr_id, "Paiement confirmé", f"Le jeton {op.token_code} est prêt à être scanné.", op.id)
-        # Utilisateur : pas de notif intermédiaire (PIN / QR) — seulement accepté / refusé / terminé.
+        # Utilisateur : pas de notif intermédiaire (PIN / QR) — seulement accepté / terminé.
     else:
         _touch(db, op, "accepted", "Code PIN confirmé, remise des espèces en attente")
         notify("pdr", op.pdr_id, "Client autorisé", f"{op.user_name} a autorisé le dépôt {op.reference}.", op.id)
@@ -468,7 +468,7 @@ def cancel(db: Session, role: str, ident: int, operation_id: int) -> dict:
     label = "Délai d’offre écoulé — passage au point suivant" if was_offer else "Opération annulée"
     _touch(db, op, "cancelled", label)
     # Offre pending : pas de notif (le chaînage mobile passe au PDR suivant).
-    # Utilisateur : pas de notif d’annulation — seulement accepté / refusé / terminé.
+    # Utilisateur : pas de notif d’annulation — seulement accepté / terminé.
     if not was_offer:
         notify("pdr", op.pdr_id, "Opération annulée", f"La demande {op.reference} a été annulée.", op.id)
     return present(db, op)

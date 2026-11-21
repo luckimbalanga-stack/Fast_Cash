@@ -21,7 +21,16 @@ def dashboard(authorization: str | None = Header(default=None), db: Session = De
     return services.dashboard(db)
 
 
-@router.get("/admin/charts")
+@router.get(
+    "/admin/charts",
+    summary="Graphiques dashboard",
+    description=(
+        "`daily` : volumes retraits/dépôts CDF & USD. "
+        "`pdr_daily.withdrawals` / `cuts` : évolution des **coupes commission** en CDF "
+        "(plages), pas le volume brut retiré. Filtre optionnel opérateur / dates."
+    ),
+    tags=["Admin"],
+)
 def charts(
     date_from: str | None = None,
     date_to: str | None = None,
@@ -75,12 +84,28 @@ def update_admin(admin_id: int, body: AdminPatch, authorization: str | None = He
     return services.update_admin(db, admin_id, body.model_dump(exclude_unset=True))
 
 
-@router.get("/settings")
+@router.get(
+    "/settings",
+    summary="Lire les paramètres globaux",
+    description=(
+        "Retourne frais, taux USD/CDF, rayon, délai offre PDR, versions app, et "
+        "`commission_ranges` enrichies (équivalents CDF + % coupe vs max de plage)."
+    ),
+    tags=["Paramètres"],
+)
 def settings(db: Session = Depends(get_db)):
     return services.settings_payload(db)
 
 
-@router.put("/settings")
+@router.put(
+    "/settings",
+    summary="Mettre à jour les paramètres",
+    description=(
+        "Mise à jour partielle. Pour `commission_ranges` : au moins une plage, sans chevauchement "
+        "(ex. 1–10 puis 11–15). Auth admin requise."
+    ),
+    tags=["Paramètres"],
+)
 def update_settings(body: SettingsWrite, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _admin(authorization)
     return services.update_settings(db, body.model_dump(exclude_unset=True))

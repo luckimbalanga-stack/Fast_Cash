@@ -15,7 +15,21 @@ _http = httpx.Client(timeout=8.0, limits=httpx.Limits(max_connections=20, max_ke
 
 
 def create_app(service_name: str, lifespan=None) -> FastAPI:
-    app = FastAPI(title=f"Fast-Cash — {service_name}", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(
+        title=f"Fast-Cash — {service_name}",
+        version="1.1.0",
+        lifespan=lifespan,
+        description=(
+            "API Fast-Cash (OpenAPI / Swagger UI via `/docs`, schéma via `/openapi.json`).\n\n"
+            "**Liquidité PDR** : poche CDF uniquement. Sur un retrait réussi, la coupe suit les "
+            "**plages de commission** (X–Y USD → coupe Z USD convertie en CDF), pas le montant retiré.\n\n"
+            "**Notifications client** : acceptation et terminaison uniquement — pas de notif sur refus / rejet.\n\n"
+            "Passerelle : préfixe `/api/...`. Services locaux : identity `:8001`, pdr `:8002`, "
+            "operations `:8003`, notifications `:8004`, admin `:8005`."
+        ),
+        contact={"name": "Fast-Cash"},
+        license_info={"name": "Proprietary"},
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

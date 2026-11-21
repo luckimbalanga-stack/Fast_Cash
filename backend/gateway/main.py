@@ -66,7 +66,7 @@ def root():
     }
 
 
-DEPLOY_STAMP = "otp-commit-fix-2026-11-19"
+DEPLOY_STAMP = "commission-ranges-swagger-2026-11-21"
 
 
 @app.get("/api/health")

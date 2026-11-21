@@ -205,7 +205,7 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
-  static const _finalStatuses = {'completed', 'cancelled', 'refused'};
+  static const _finalStatuses = {'completed', 'cancelled'};
 
   String type = 'all';
   String period = 'all';

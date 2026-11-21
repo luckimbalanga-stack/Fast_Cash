@@ -56,7 +56,15 @@ def lookup_token(code: str, authorization: str | None = Header(default=None), db
     return services.lookup_token(db, pdr_id, code)
 
 
-@router.post("/operations/token/redeem")
+@router.post(
+    "/operations/token/redeem",
+    summary="Scanner / valider un ticket",
+    description=(
+        "Clôture l’opération (`completed`). Retrait : consomme la commission CDF réservée. "
+        "Dépôt : crédite le montant converti en CDF. Notifie client + PDR."
+    ),
+    tags=["Opérations"],
+)
 def redeem(body: TokenRedeem, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _role, pdr_id = require_roles(authorization, "pdr")
     return services.redeem(db, pdr_id, body.code)
@@ -70,13 +78,30 @@ def get_operation(operation_id: int, authorization: str | None = Header(default=
     return services.present(db, op)
 
 
-@router.post("/operations/{operation_id}/accept")
+@router.post(
+    "/operations/{operation_id}/accept",
+    summary="Accepter une demande (PDR)",
+    description=(
+        "Retrait : réserve la **commission** (plage → CDF) puis passe en `pin_required` + notif client. "
+        "Dépôt : ticket immédiat (`payment_confirmed`) + notif client. "
+        "Auth PDR. La liquidité est toujours gérée en CDF."
+    ),
+    tags=["Opérations"],
+)
 def accept(operation_id: int, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _role, pdr_id = require_roles(authorization, "pdr")
     return services.accept(db, pdr_id, operation_id)
 
 
-@router.post("/operations/{operation_id}/refuse")
+@router.post(
+    "/operations/{operation_id}/refuse",
+    summary="Refuser une demande (PDR)",
+    description=(
+        "Passe l’offre en `refused`. **Aucune notification** n’est envoyée au client "
+        "(le chaînage mobile passe au PDR suivant)."
+    ),
+    tags=["Opérations"],
+)
 def refuse(operation_id: int, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _role, pdr_id = require_roles(authorization, "pdr")
     return services.refuse(db, pdr_id, operation_id)

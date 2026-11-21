@@ -73,9 +73,10 @@ class PdrHomePage extends StatelessWidget {
     final pdr = controller.pdr;
     if (pdr == null) return const SizedBox.shrink();
     final recent = controller.operations.where(_isWithinLast24Hours);
-    final today = recent.length;
     final accepted = recent.where(_isAcceptedRequest).length;
     final completed = recent.where(_isCompletedRequest).length;
+    // Total 24 h = acceptées + terminées uniquement (pas les refusées / annulées).
+    final today = accepted + completed;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       children: [
@@ -809,19 +810,17 @@ class PdrHistoryPage extends StatefulWidget {
 }
 
 class _PdrHistoryPageState extends State<PdrHistoryPage> {
-  static const _finalStatuses = {'completed', 'cancelled', 'refused'};
+  /// Historique PDR : terminées seulement (pas refusées ni annulées).
+  static const _finalStatuses = {'completed'};
 
   String type = 'all';
-  String? status;
   String? currency;
 
   @override
   Widget build(BuildContext context) {
-    const historyStatuses = ['completed', 'cancelled', 'refused'];
     final items = context.watch<AppController>().operations.where((operation) {
       if (!_finalStatuses.contains(operation.status)) return false;
       if (type != 'all' && operation.type != type) return false;
-      if (status != null && operation.status != status) return false;
       if (currency != null && operation.currency != currency) return false;
       return true;
     }).toList();
@@ -838,15 +837,6 @@ class _PdrHistoryPageState extends State<PdrHistoryPage> {
           ChoiceChip(label: const Text('CDF'), selected: currency == 'CDF', onSelected: (_) => setState(() => currency = currency == 'CDF' ? null : 'CDF')),
         ]),
         const SizedBox(height: 8),
-        DropdownButton<String?>(
-          value: status != null && _finalStatuses.contains(status) ? status : null,
-          hint: const Text('Statut'),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('Tous les statuts')),
-            ...historyStatuses.map((key) => DropdownMenuItem(value: key, child: Text(statusLabels[key]!))),
-          ],
-          onChanged: (value) => setState(() => status = value),
-        ),
         ...items.map((operation) => ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('${operation.userName} · ${formatMoney(operation.amount, operation.currency)}'),

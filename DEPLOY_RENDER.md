@@ -113,6 +113,15 @@ Remplace `VOTRE-COMPTE` et `VOTRE-REPO` par tes vrais noms. Si le remote existe 
 4. Test rapide de la page d’accueil : `https://…onrender.com/`  
    → doit afficher le nom Fast-Cash.
 
+5. **Documentation OpenAPI / Swagger** (FastAPI, pas Django)  
+   En local, chaque microservice expose `/docs` et `/openapi.json` :
+   - Admin / paramètres (plages de commission) : `http://127.0.0.1:8005/docs`
+   - Opérations (accept / refuse / redeem) : `http://127.0.0.1:8003/docs`
+   - Identité : `http://127.0.0.1:8001/docs`
+   - PDR : `http://127.0.0.1:8002/docs`
+   - Notifications : `http://127.0.0.1:8004/docs`  
+   La passerelle (`:8000` / URL Render) ne proxy pas `/docs` des services ; utilise les ports ci-dessus en local, ou ouvre le service concerné si tu exposes un port dédié.
+
 Si le health check échoue : regarde **Logs** sur Render (souvent un service interne qui met trop longtemps à démarrer, ou une erreur Python au boot).
 
 ---
