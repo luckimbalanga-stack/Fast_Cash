@@ -21,12 +21,12 @@ class CommissionRangeWrite(BaseModel):
 
     min_usd: float = Field(
         gt=0,
-        description="X — montant minimum de retrait (USD). Inclus.",
+        description="X — montant minimum de l’opération (USD). Inclus.",
         examples=[1],
     )
     max_usd: float = Field(
         gt=0,
-        description="Y — montant maximum de retrait (USD). Inclus. Doit être > min_usd.",
+        description="Y — montant maximum de l’opération (USD). Inclus. Doit être > min_usd.",
         examples=[10],
     )
     cut_usd: float = Field(
@@ -37,12 +37,17 @@ class CommissionRangeWrite(BaseModel):
         ),
         examples=[0.5],
     )
+    transaction_type: str = Field(
+        default="withdrawal",
+        description="Type d’opération ciblé : withdrawal (retrait, défaut) ou deposit (dépôt).",
+        examples=["withdrawal", "deposit"],
+    )
 
     model_config = {
         "json_schema_extra": {
             "examples": [
-                {"min_usd": 1, "max_usd": 10, "cut_usd": 0.5},
-                {"min_usd": 11, "max_usd": 50, "cut_usd": 1},
+                {"min_usd": 1, "max_usd": 10, "cut_usd": 0.5, "transaction_type": "withdrawal"},
+                {"min_usd": 1, "max_usd": 50, "cut_usd": 0.3, "transaction_type": "deposit"},
             ]
         }
     }

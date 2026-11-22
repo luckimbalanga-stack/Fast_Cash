@@ -1,4 +1,4 @@
-"""Accès typé aux paramètres globaux (noyau partagé — DIP / SRP) + cache TTL."""
+"""Accès typé aux paramètres globaux (noyau partagé — DIP / SRP) + cache Redis/TTL."""
 
 import time
 from threading import Lock
@@ -13,6 +13,7 @@ from shared.commission_ranges import (
     validate_commission_ranges,
 )
 from shared.models import Setting
+from shared import redis_cache
 
 APP_SETTING_DEFAULTS = {
     "app_version": "1.0.0",
@@ -23,7 +24,7 @@ APP_SETTING_DEFAULTS = {
     "commission_ranges": dumps_ranges(DEFAULT_COMMISSION_RANGES),
 }
 
-_CACHE_TTL_S = 20.0
+_CACHE_TTL_S = 30
 _cache_lock = Lock()
 _cache_payload: dict | None = None
 _cache_raw: dict[str, str] | None = None
@@ -36,6 +37,9 @@ def invalidate_settings_cache() -> None:
         _cache_payload = None
         _cache_raw = None
         _cache_at = 0.0
+    redis_cache.invalidate_settings()
+    # Les stats admin dépendent des plages / taux.
+    redis_cache.invalidate_admin_stats()
 
 
 def settings_map(db: Session) -> dict[str, str]:
@@ -44,7 +48,16 @@ def settings_map(db: Session) -> dict[str, str]:
     with _cache_lock:
         if _cache_raw is not None and (now - _cache_at) < _CACHE_TTL_S:
             return dict(_cache_raw)
+
+    cached = redis_cache.get_json(redis_cache.KEY_SETTINGS_MAP)
+    if isinstance(cached, dict):
+        with _cache_lock:
+            _cache_raw = {str(k): str(v) for k, v in cached.items()}
+            _cache_at = now
+        return dict(_cache_raw)
+
     raw = {row.key: row.value for row in db.query(Setting).all()}
+    redis_cache.set_json(redis_cache.KEY_SETTINGS_MAP, raw, ttl=_CACHE_TTL_S)
     with _cache_lock:
         _cache_raw = dict(raw)
         _cache_at = now
@@ -66,6 +79,14 @@ def settings_payload(db: Session) -> dict:
     with _cache_lock:
         if _cache_payload is not None and (now - _cache_at) < _CACHE_TTL_S:
             return dict(_cache_payload)
+
+    cached = redis_cache.get_json(redis_cache.KEY_SETTINGS_PAYLOAD)
+    if isinstance(cached, dict) and "fee_percent" in cached:
+        with _cache_lock:
+            _cache_payload = dict(cached)
+            _cache_at = now
+        return dict(cached)
+
     raw = settings_map(db)
     rate = float(raw.get("usd_cdf_rate", "2880"))
     ranges_raw = raw.get("commission_ranges", APP_SETTING_DEFAULTS["commission_ranges"])
@@ -88,6 +109,7 @@ def settings_payload(db: Session) -> dict:
         "app_update_message": raw.get("app_update_message", APP_SETTING_DEFAULTS["app_update_message"]),
         "commission_ranges": ranges_with_display(ranges, rate),
     }
+    redis_cache.set_json(redis_cache.KEY_SETTINGS_PAYLOAD, payload, ttl=_CACHE_TTL_S)
     with _cache_lock:
         _cache_payload = dict(payload)
         _cache_at = now

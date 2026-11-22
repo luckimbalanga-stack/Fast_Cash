@@ -344,6 +344,13 @@ class AppController extends ChangeNotifier {
 
   /// Sync léger : opérations + notifications uniquement.
   Future<void> refreshLight() async {
+    if (!_isLoggedIn) return;
+    // Attendre un sync déjà en cours (évite de rater la notif « Retrait effectué »).
+    var wait = 0;
+    while (_refreshing && wait < 40) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      wait += 1;
+    }
     if (!_isLoggedIn || _refreshing) return;
     _refreshing = true;
     _lightOnly = true;

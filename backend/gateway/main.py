@@ -78,7 +78,13 @@ def health():
             report[name] = response.status_code == 200
         except httpx.HTTPError:
             report[name] = False
-    payload = {"gateway": True, "services": report, "deploy": DEPLOY_STAMP}
+    try:
+        from shared.redis_cache import redis_status
+
+        cache = redis_status()
+    except Exception:
+        cache = {"configured": False, "connected": False, "backend": "memory"}
+    payload = {"gateway": True, "services": report, "cache": cache, "deploy": DEPLOY_STAMP}
     # Render ne marque le service Live que si le health check répond 200.
     if not all(report.values()):
         return JSONResponse(payload, status_code=503)

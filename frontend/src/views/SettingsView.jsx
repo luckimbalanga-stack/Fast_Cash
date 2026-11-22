@@ -12,13 +12,14 @@ function money(value) {
   return number.toLocaleString('fr-FR', { maximumFractionDigits: 2 })
 }
 
-const DEFAULT_RANGE = { min_usd: '1', max_usd: '10000', cut_usd: '0.5' }
+const DEFAULT_RANGE = { min_usd: '1', max_usd: '10000', cut_usd: '0.5', transaction_type: 'withdrawal' }
 
 function normalizeRanges(list) {
   const rows = (list || []).map((row) => ({
     min_usd: plain(row.min_usd ?? ''),
     max_usd: plain(row.max_usd ?? ''),
     cut_usd: plain(row.cut_usd ?? ''),
+    transaction_type: row.transaction_type === 'deposit' ? 'deposit' : 'withdrawal',
   }))
   return rows.length ? rows : [{ ...DEFAULT_RANGE }]
 }
@@ -70,8 +71,11 @@ export function SettingsView() {
   function addRange() {
     setRanges((current) => {
       const last = current[current.length - 1]
-      const nextMin = last ? String(Number(String(last.max_usd).replace(',', '.')) + 1 || '') : '1'
-      return [...current, { min_usd: nextMin, max_usd: '', cut_usd: '' }]
+      const tx = last?.transaction_type === 'deposit' ? 'deposit' : 'withdrawal'
+      const sameType = current.filter((row) => (row.transaction_type || 'withdrawal') === tx)
+      const lastSame = sameType[sameType.length - 1]
+      const nextMin = lastSame ? String(Number(String(lastSame.max_usd).replace(',', '.')) + 1 || '') : '1'
+      return [...current, { min_usd: nextMin, max_usd: '', cut_usd: '', transaction_type: tx }]
     })
   }
 
@@ -102,7 +106,7 @@ export function SettingsView() {
       <p className="muted">
         {tab === 'general'
           ? 'Tous les paramètres d’exploitation et de mise à jour de l’app.'
-          : 'Au moins une plage est obligatoire — elle définit la coupe liquidité PDR à chaque retrait réussi.'}
+          : 'Au moins une plage est obligatoire. Choisissez retrait ou dépôt : la coupe liquidité PDR s’applique au type choisi (montant converti en CDF).'}
       </p>
 
       {tab === 'general' ? (
@@ -162,8 +166,8 @@ export function SettingsView() {
         >
           <h3>Plages de commission PDR</h3>
           <p className="muted">
-            Pour un retrait entre X et Y USD, la plateforme coupe Z USD (converti en CDF au taux {money(rateNumber)}) dans la liquidité du PDR.
-            Les plages ne doivent pas se chevaucher (ex. 1–10 puis 11–15).
+            Pour une opération (retrait ou dépôt) entre X et Y USD, la plateforme coupe Z USD (converti en CDF au taux {money(rateNumber)}) dans la liquidité du PDR.
+            Les plages ne doivent pas se chevaucher au sein du même type (ex. 1–10 puis 11–15 pour le retrait).
           </p>
 
           <div className="stack" style={{ gap: 12 }}>
@@ -171,6 +175,7 @@ export function SettingsView() {
               const minUsd = Number(String(row.min_usd).replace(',', '.'))
               const maxUsd = Number(String(row.max_usd).replace(',', '.'))
               const cutUsd = Number(String(row.cut_usd).replace(',', '.'))
+              const tx = row.transaction_type === 'deposit' ? 'deposit' : 'withdrawal'
               return (
                 <div key={index} className="card" style={{ padding: 14, border: '1px solid #d7e0ea' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -179,6 +184,14 @@ export function SettingsView() {
                       Supprimer
                     </button>
                   </div>
+                  <label style={{ marginBottom: 10 }}>
+                    Type de transaction
+                    <select value={tx} onChange={(event) => updateRange(index, 'transaction_type', event.target.value)}>
+                      <option value="withdrawal">Retrait</option>
+                      <option value="deposit">Dépôt</option>
+                    </select>
+                    <small>Par défaut : retrait. Pour le dépôt, la coupe s’applique à la validation du ticket.</small>
+                  </label>
                   <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
                     <label>
                       X — min (USD)

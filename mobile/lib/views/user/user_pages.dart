@@ -384,12 +384,14 @@ class OperationDetailPage extends StatelessWidget {
               ),
             ],
           ],
-          if (NotificationFeed.destinationEnabled(operation.status)) ...[
+          if (NotificationFeed.destinationVisible(operation.status)) ...[
             const SizedBox(height: 16),
             GhostButton(
               label: 'Itinéraire',
               icon: Icons.near_me_outlined,
-              onPressed: () => openRoute(context, operation),
+              onPressed: NotificationFeed.destinationEnabled(operation.status)
+                  ? () => openRoute(context, operation)
+                  : null,
             ),
           ],
           const SizedBox(height: 20),
@@ -730,13 +732,16 @@ class NotificationsPage extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 3, color: AppColors.brand),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Demande en cours', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.night)),
-                              SizedBox(height: 2),
-                              Text('Touchez pour revenir à l’appel des PDR', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                              Text(
+                                active.type == 'deposit' ? 'Dépôt en cours' : 'Retrait en cours',
+                                style: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.night),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text('Touchez pour revenir à l’appel des PDR', style: TextStyle(color: AppColors.muted, fontSize: 13)),
                             ],
                           ),
                         ),

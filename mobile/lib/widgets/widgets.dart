@@ -48,8 +48,13 @@ class NotificationFeed extends StatelessWidget {
   final ValueChanged<CashOperation>? onOpenDestination;
   final Widget? activeDispatchBanner;
 
+  /// Itinéraire cliquable tant que la demande est acceptée / ticket prêt.
   static bool destinationEnabled(String status) =>
       status == 'accepted' || status == 'pin_required' || status == 'payment_confirmed';
+
+  /// Visible aussi après terminaison, mais alors non cliquable.
+  static bool destinationVisible(String status) =>
+      destinationEnabled(status) || status == 'completed' || status == 'cash_delivered';
 
   @override
   Widget build(BuildContext context) {
@@ -124,8 +129,8 @@ class NotificationFeed extends StatelessWidget {
   Widget _card(AppNotification item) {
     final tone = _tone(item.title);
     final operation = item.operationId == null ? null : resolveOperation?.call(item.operationId!);
-    final showDestination = operation != null && destinationEnabled(operation.status);
-    final destinationActive = showDestination;
+    final showDestination = operation != null && destinationVisible(operation.status);
+    final destinationActive = operation != null && destinationEnabled(operation.status);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -301,22 +306,25 @@ class GhostButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    final color = enabled ? AppColors.brand : AppColors.muted;
     return SizedBox(
       width: double.infinity,
       height: 56,
       child: OutlinedButton(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.brand,
-          side: const BorderSide(color: AppColors.brand, width: 1.4),
+          foregroundColor: color,
+          disabledForegroundColor: AppColors.muted,
+          side: BorderSide(color: enabled ? AppColors.brand : AppColors.line, width: 1.4),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (icon != null) ...[Icon(icon, size: 18), const SizedBox(width: 8)],
-            Text(label),
+            if (icon != null) ...[Icon(icon, size: 18, color: color), const SizedBox(width: 8)],
+            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w700)),
           ],
         ),
       ),

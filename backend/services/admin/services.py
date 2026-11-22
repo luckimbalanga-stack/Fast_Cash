@@ -16,6 +16,7 @@ from shared.commission_ranges import (
 from shared.models import AdminUser, Operation, Pdr, PhoneNumber, User
 from shared.operation_rules import amount_cdf, is_pdr_success
 from shared.serialize import admin_dict, user_dict
+from shared import redis_cache
 from shared.settings_repo import APP_SETTING_DEFAULTS, settings_map, settings_payload, upsert_setting
 from shared.utils import (
     KINSHASA,
@@ -106,6 +107,10 @@ def _delta(current: float, previous: float) -> float | None:
 
 
 def dashboard(db: Session) -> dict:
+    cached = redis_cache.get_json(redis_cache.KEY_ADMIN_DASHBOARD)
+    if isinstance(cached, dict) and "transactions" in cached:
+        return cached
+
     from sqlalchemy import case, func
 
     now = datetime.now(KINSHASA)
@@ -147,7 +152,7 @@ def dashboard(db: Session) -> dict:
         prev_deposits,
     ) = [int(value or 0) for value in row]
     rate = round(positives / (positives + refused) * 100, 1) if positives or refused else 0
-    return {
+    payload = {
         "users": {"label": "Utilisateurs", "value": int(users), "delta": None},
         "active_pdr": {"label": "PDR actifs", "value": int(active_pdr), "delta": None},
         "transactions": {"label": "Transactions", "value": total, "delta": _delta(recent_total, prev_total)},
@@ -159,6 +164,8 @@ def dashboard(db: Session) -> dict:
         "acceptance_rate": rate,
         "banner": settings_payload(db)["banner"],
     }
+    redis_cache.set_json(redis_cache.KEY_ADMIN_DASHBOARD, payload, ttl=20)
+    return payload
 
 
 def _parse_day(value: str | None, fallback):
@@ -189,6 +196,11 @@ def charts(
     span = (end - start).days
     if span > 180:
         raise HTTPException(status_code=400, detail="La période du graphique PDR est limitée à 180 jours.")
+
+    cache_key = redis_cache.charts_cache_key(start.isoformat(), end.isoformat(), network_key)
+    cached = redis_cache.get_json(cache_key)
+    if isinstance(cached, dict) and "daily" in cached:
+        return cached
 
     window_start = min(today - timedelta(days=29), start).isoformat()
     ops = (
@@ -245,7 +257,12 @@ def charts(
     ranges = validate_commission_ranges(
         parse_commission_ranges(
             [
-                {"min_usd": row["min_usd"], "max_usd": row["max_usd"], "cut_usd": row["cut_usd"]}
+                {
+                    "min_usd": row["min_usd"],
+                    "max_usd": row["max_usd"],
+                    "cut_usd": row["cut_usd"],
+                    "transaction_type": row.get("transaction_type", "withdrawal"),
+                }
                 for row in (cfg.get("commission_ranges") or [])
             ]
         )
@@ -255,34 +272,47 @@ def charts(
     pdr_daily = []
     for day in pdr_days:
         key = day.isoformat()
-        cuts = 0.0
-        deposits = 0.0
+        withdrawal_cuts = 0.0
+        deposit_cuts = 0.0
         count = 0
         for op in by_day.get(key, []):
             if not op.pdr_id or not is_pdr_success(op):
                 continue
             if network_key and op.network != network_key:
                 continue
-            if op.type == "withdrawal":
-                try:
-                    cuts += commission_cut_cdf(ranges, op.amount, op.currency, rate)
-                except Exception:
-                    # Hors plage historique : approx. 0 pour ne pas fausser le graphique.
-                    pass
-            else:
-                deposits += amount_cdf(op, rate)
+            try:
+                if op.type == "withdrawal":
+                    withdrawal_cuts += commission_cut_cdf(
+                        ranges,
+                        op.amount,
+                        op.currency,
+                        rate,
+                        transaction_type="withdrawal",
+                    )
+                else:
+                    deposit_cuts += commission_cut_cdf(
+                        ranges,
+                        op.amount,
+                        op.currency,
+                        rate,
+                        transaction_type="deposit",
+                    )
+            except Exception:
+                # Hors plage / pas de plage dépôt : 0 pour ne pas fausser le graphique.
+                pass
             count += 1
         pdr_daily.append({
             "date": key,
-            # Compat front : "withdrawals" = coupes commission CDF (pas le volume retiré).
-            "withdrawals": round_money(cuts, "CDF"),
-            "cuts": round_money(cuts, "CDF"),
-            "deposits": round_money(deposits, "CDF"),
-            "total": round_money(cuts + deposits, "CDF"),
+            # Compat front : "withdrawals" = coupes commission retrait (CDF).
+            "withdrawals": round_money(withdrawal_cuts, "CDF"),
+            "cuts": round_money(withdrawal_cuts, "CDF"),
+            # "deposits" = coupes commission dépôt (CDF), pas le volume reçu.
+            "deposits": round_money(deposit_cuts, "CDF"),
+            "total": round_money(withdrawal_cuts + deposit_cuts, "CDF"),
             "count": count,
         })
 
-    return {
+    payload = {
         "daily": daily,
         "pdr_daily": pdr_daily,
         "pdr_filters": {
@@ -296,6 +326,8 @@ def charts(
         "top_pdrs": top,
         "usd_cdf_rate": rate,
     }
+    redis_cache.set_json(cache_key, payload, ttl=30)
+    return payload
 
 
 def reports(db: Session, date_from: str | None, date_to: str | None, network: str | None = None) -> dict:

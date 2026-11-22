@@ -14,6 +14,9 @@ services:
       # Dashboard Render: renseigner DATABASE_URL (Neon pooled).
       - key: DATABASE_URL
         sync: false
+      # Optionnel : Redis / Upstash pour cache partagé (paramètres, dashboard, graphiques).
+      - key: REDIS_URL
+        sync: false
 
   # Site statique: pas de plan / healthCheck (CDN uniquement).
   - type: web

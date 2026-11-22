@@ -65,11 +65,11 @@ function currencySeries(days, currency) {
   }))
 }
 
-function exportVolume(days, currency) {
+function exportVolume(days, currency, { cuts = false } = {}) {
   exportExcel({
     filename: `fastcash-volume-${currency}.xls`,
-    sheet: `Volume ${currency}`,
-    headers: ['Date', 'Devise', 'Retraits', 'Dépôts', 'Total'],
+    sheet: cuts ? `Coupes ${currency}` : `Volume ${currency}`,
+    headers: ['Date', 'Devise', cuts ? 'Coupes retrait' : 'Retraits', cuts ? 'Coupes dépôt' : 'Dépôts', 'Total'],
     rows: days.map((day) => {
       const withdrawals = day.withdrawals
       const deposits = day.deposits
@@ -208,13 +208,13 @@ function PdrVolumeChart({ days }) {
         <div>
           <h3>Coupes liquidité PDR (CDF)</h3>
           <p className="chart-total">{formatMoney(total, 'CDF')}</p>
-          <p className="muted">Évolution des commissions coupées dans la liquidité PDR (plages → CDF). Filtrez par dates et opérateur.</p>
+          <p className="muted">Évolution des commissions coupées (retrait et dépôt) dans la liquidité PDR via les plages → CDF. Filtrez par dates et opérateur.</p>
         </div>
         <div className="chart-tools">
           <button
             type="button"
             className="ghost"
-            onClick={() => exportVolume(chartDays, 'CDF')}
+            onClick={() => exportVolume(chartDays, 'CDF', { cuts: true })}
           >
             Exporter Excel
           </button>
@@ -236,7 +236,7 @@ function PdrVolumeChart({ days }) {
       ) : (
         <>
           <LineChart days={chartDays} currency="CDF" />
-          <p className="legend"><i className="dot night" /> Dépôts reçus <i className="dot brand" /> Coupes commission</p>
+          <p className="legend"><i className="dot night" /> Coupes dépôt <i className="dot brand" /> Coupes retrait</p>
         </>
       )}
     </article>

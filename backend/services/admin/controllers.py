@@ -26,8 +26,8 @@ def dashboard(authorization: str | None = Header(default=None), db: Session = De
     summary="Graphiques dashboard",
     description=(
         "`daily` : volumes retraits/dépôts CDF & USD. "
-        "`pdr_daily.withdrawals` / `cuts` : évolution des **coupes commission** en CDF "
-        "(plages), pas le volume brut retiré. Filtre optionnel opérateur / dates."
+        "`pdr_daily.withdrawals` / `cuts` : coupes commission **retrait** (CDF). "
+        "`pdr_daily.deposits` : coupes commission **dépôt** (CDF). Filtre optionnel opérateur / dates."
     ),
     tags=["Admin"],
 )

@@ -502,15 +502,20 @@ class _PdrScanPageState extends State<PdrScanPage> {
               ),
             ]),
           ),
-          const SizedBox(height: 16),
-          PrimaryButton(
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: PrimaryButton(
             label: 'Saisir le ticket manuellement',
             icon: Icons.dialpad_rounded,
             onPressed: _busy
                 ? null
                 : () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PdrManualTokenPage())),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -548,32 +553,44 @@ class _PdrManualTokenPageState extends State<PdrManualTokenPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Saisie manuelle')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
+      body: Column(
         children: [
-          const Text(
-            'Entrez le code du ticket puis appuyez sur Vérifier.',
-            style: TextStyle(color: AppColors.muted, height: 1.35),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: code,
-            enabled: !_busy,
-            textCapitalization: TextCapitalization.characters,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              hintText: 'FC-4829-7714',
-              filled: true,
-              fillColor: AppColors.mist,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              children: [
+                const Text(
+                  'Entrez le code du ticket puis appuyez sur Vérifier.',
+                  style: TextStyle(color: AppColors.muted, height: 1.35),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: code,
+                  enabled: !_busy,
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'FC-4829-7714',
+                    filled: true,
+                    fillColor: AppColors.mist,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: _busy ? 'Vérification…' : 'Vérifier',
-            icon: Icons.verified_outlined,
-            busy: _busy,
-            onPressed: _busy || code.text.trim().isEmpty ? null : _verify,
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: PrimaryButton(
+                label: _busy ? 'Vérification…' : 'Vérifier',
+                icon: Icons.verified_outlined,
+                busy: _busy,
+                onPressed: _busy || code.text.trim().isEmpty ? null : _verify,
+              ),
+            ),
           ),
         ],
       ),
@@ -660,15 +677,22 @@ class LiquidityPage extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            PrimaryButton(
-              label: 'Rajouter liquidité',
-              icon: Icons.add_card_outlined,
-              onPressed: () => _openRecharge(context),
-            ),
           ],
         ],
       ),
+      bottomNavigationBar: pdr == null
+          ? null
+          : SafeArea(
+              minimum: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                child: PrimaryButton(
+                  label: 'Rajouter liquidité',
+                  icon: Icons.add_card_outlined,
+                  onPressed: () => _openRecharge(context),
+                ),
+              ),
+            ),
     );
   }
 }

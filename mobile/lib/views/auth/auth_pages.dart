@@ -22,52 +22,67 @@ class WelcomePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.mist,
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(20, topGap, 20, short ? 12 : 20),
-          child: Column(
-            children: [
-              Center(child: FastCashMark(size: logoSize, stacked: true)),
-              SizedBox(height: short ? 6 : 10),
-              const Text(
-                'Votre argent, votre monnaie, à proximité.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.muted, fontSize: 14, height: 1.35),
-              ),
-              SizedBox(height: short ? 12 : 16),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.asset(
-                    'assets/brand/hero.png',
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.center,
-                    semanticLabel: 'Un point de retrait Fast-Cash à proximité',
-                  ),
-                ),
-              ),
-              SizedBox(height: short ? 12 : 16),
-              if (!short)
-                const Row(
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, topGap, 20, 8),
+                child: Column(
                   children: [
-                    _Feature(icon: Icons.bolt_rounded, title: 'Rapide', text: 'Des transactions en quelques secondes'),
-                    _Feature(icon: Icons.location_on_outlined, title: 'Proche', text: 'Un large réseau de PDR autour de vous'),
-                    _Feature(icon: Icons.payments_outlined, title: 'Intégral', text: 'Tout le montant, dans la devise choisie'),
+                    Center(child: FastCashMark(size: logoSize, stacked: true)),
+                    SizedBox(height: short ? 6 : 10),
+                    const Text(
+                      'Votre argent, votre monnaie, à proximité.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.muted, fontSize: 14, height: 1.35),
+                    ),
+                    SizedBox(height: short ? 12 : 16),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Image.asset(
+                          'assets/brand/hero.png',
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          alignment: Alignment.center,
+                          semanticLabel: 'Un point de retrait Fast-Cash à proximité',
+                        ),
+                      ),
+                    ),
+                    if (!short) ...[
+                      SizedBox(height: short ? 12 : 16),
+                      const Row(
+                        children: [
+                          _Feature(icon: Icons.bolt_rounded, title: 'Rapide', text: 'Des transactions en quelques secondes'),
+                          _Feature(icon: Icons.location_on_outlined, title: 'Proche', text: 'Un large réseau de PDR autour de vous'),
+                          _Feature(icon: Icons.payments_outlined, title: 'Intégral', text: 'Tout le montant, dans la devise choisie'),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
-              if (!short) const SizedBox(height: 16),
-              PrimaryButton(
-                label: 'Créer un compte',
-                icon: Icons.arrow_forward_rounded,
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterPage())),
               ),
-              const SizedBox(height: 10),
-              GhostButton(
-                label: 'Se connecter',
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginPage())),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PrimaryButton(
+                    label: 'Créer un compte',
+                    icon: Icons.arrow_forward_rounded,
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterPage())),
+                  ),
+                  const SizedBox(height: 10),
+                  GhostButton(
+                    label: 'Se connecter',
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginPage())),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -198,76 +213,88 @@ class _LoginPageState extends State<LoginPage> {
 
     return Scaffold(
       appBar: AppBar(leading: const BackButton()),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
+      body: Column(
         children: [
-          const Center(child: FastCashMark(size: 168, stacked: true)),
-          const SizedBox(height: 12),
-          Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 8),
-          Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
-          const SizedBox(height: 24),
-          if (!otpStep && !passwordStep) PhoneField(controller: phone),
-          if (passwordStep)
-            TextField(
-              controller: password,
-              obscureText: !showPassword,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => runAction(context, () async {
-                await _next();
-                if (mounted) setState(() => busy = false);
-              }),
-              decoration: InputDecoration(
-                hintText: 'Mot de passe',
-                filled: true,
-                fillColor: AppColors.mist,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                suffixIcon: IconButton(
-                  onPressed: () => setState(() => showPassword = !showPassword),
-                  icon: Icon(showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                ),
-              ),
-            ),
-          if (otpStep) OtpBoxes(controller: code, onChanged: (_) {}),
-          if (otpStep) ...[
-            const SizedBox(height: 14),
-            SoftCard(
-              color: AppColors.waitingSoft,
-              child: Column(
-                children: [
-                  const Text(
-                    'Simulation OTP',
-                    style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.waiting),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    previewCode == null
-                        ? 'Passerelle SMS non branchée. Le code devrait s’afficher ici après le mot de passe. Redéployez l’API si le code n’apparaît pas.'
-                        : 'Passerelle SMS non branchée. Utilisez ce code de test :',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppColors.muted, height: 1.35),
-                  ),
-                  if (previewCode != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      previewCode!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 4, color: AppColors.night),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              children: [
+                const Center(child: FastCashMark(size: 168, stacked: true)),
+                const SizedBox(height: 12),
+                Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 8),
+                Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 24),
+                if (!otpStep && !passwordStep) PhoneField(controller: phone),
+                if (passwordStep)
+                  TextField(
+                    controller: password,
+                    obscureText: !showPassword,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => runAction(context, () async {
+                      await _next();
+                      if (mounted) setState(() => busy = false);
+                    }),
+                    decoration: InputDecoration(
+                      hintText: 'Mot de passe',
+                      filled: true,
+                      fillColor: AppColors.mist,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                      suffixIcon: IconButton(
+                        onPressed: () => setState(() => showPassword = !showPassword),
+                        icon: Icon(showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                      ),
                     ),
-                  ],
+                  ),
+                if (otpStep) OtpBoxes(controller: code, onChanged: (_) {}),
+                if (otpStep) ...[
+                  const SizedBox(height: 14),
+                  SoftCard(
+                    color: AppColors.waitingSoft,
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Simulation OTP',
+                          style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.waiting),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          previewCode == null
+                              ? 'Passerelle SMS non branchée. Le code devrait s’afficher ici après le mot de passe. Redéployez l’API si le code n’apparaît pas.'
+                              : 'Passerelle SMS non branchée. Utilisez ce code de test :',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: AppColors.muted, height: 1.35),
+                        ),
+                        if (previewCode != null) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            previewCode!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 4, color: AppColors.night),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ],
+              ],
+            ),
+          ),
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+              child: PrimaryButton(
+                label: actionLabel,
+                icon: Icons.arrow_forward_rounded,
+                busy: busy,
+                onPressed: () => runAction(context, () async {
+                  await _next();
+                  if (mounted) setState(() => busy = false);
+                }),
               ),
             ),
-          ],
-          const SizedBox(height: 20),
-          PrimaryButton(
-            label: actionLabel,
-            icon: Icons.arrow_forward_rounded,
-            busy: busy,
-            onPressed: () => runAction(context, () async {
-              await _next();
-              if (mounted) setState(() => busy = false);
-            }),
           ),
         ],
       ),
@@ -330,81 +357,93 @@ class _RegisterPageState extends State<RegisterPage> {
     final titles = ['Votre nom', 'Votre numéro', 'Vérification OTP'];
     return Scaffold(
       appBar: AppBar(leading: BackButton(onPressed: () => step == 0 ? Navigator.pop(context) : setState(() => step -= 1))),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
+      body: Column(
         children: [
-          const Center(child: FastCashMark(size: 108, stacked: true)),
-          const SizedBox(height: 8),
-          const Text('Votre argent, votre monnaie, à proximité.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted)),
-          const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: Image.asset('assets/brand/hero.png', height: 156, width: double.infinity, fit: BoxFit.cover),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: List.generate(3, (index) {
-              final active = index <= step;
-              return Expanded(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  height: 6,
-                  decoration: BoxDecoration(color: active ? AppColors.brand : AppColors.line, borderRadius: BorderRadius.circular(8)),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              children: [
+                const Center(child: FastCashMark(size: 108, stacked: true)),
+                const SizedBox(height: 8),
+                const Text('Votre argent, votre monnaie, à proximité.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 14),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Image.asset('assets/brand/hero.png', height: 156, width: double.infinity, fit: BoxFit.cover),
                 ),
-              );
-            }),
-          ),
-          const SizedBox(height: 22),
-          Text(titles[step], style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 8),
-          Text(
-            step == 2 ? 'Saisissez le code envoyé à votre numéro.' : 'Ces informations servent à créer votre espace Fast-Cash.',
-            style: const TextStyle(color: AppColors.muted),
-          ),
-          const SizedBox(height: 20),
-          if (step == 0)
-            TextField(
-              controller: name,
-              textCapitalization: TextCapitalization.words,
-              decoration: InputDecoration(prefixIcon: const Icon(Icons.person_outline, color: AppColors.brand), hintText: 'Jean Mwamba', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
-            ),
-          if (step == 1) ...[
-            PhoneField(controller: phone, onChanged: (_) => network = null),
-            if (detected != null) ...[
-              const SizedBox(height: 12),
-              Text('Réseau présumé : $detected', style: const TextStyle(color: AppColors.muted)),
-            ],
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: network,
-              decoration: InputDecoration(filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none), labelText: 'Corriger le réseau'),
-              items: const [
-                DropdownMenuItem(value: 'orange', child: Text('Orange Money')),
-                DropdownMenuItem(value: 'airtel', child: Text('Airtel Money')),
-                DropdownMenuItem(value: 'mpesa', child: Text('M-Pesa')),
-                DropdownMenuItem(value: 'afrimoney', child: Text('AfriMoney')),
+                const SizedBox(height: 16),
+                Row(
+                  children: List.generate(3, (index) {
+                    final active = index <= step;
+                    return Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        height: 6,
+                        decoration: BoxDecoration(color: active ? AppColors.brand : AppColors.line, borderRadius: BorderRadius.circular(8)),
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 22),
+                Text(titles[step], style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 8),
+                Text(
+                  step == 2 ? 'Saisissez le code envoyé à votre numéro.' : 'Ces informations servent à créer votre espace Fast-Cash.',
+                  style: const TextStyle(color: AppColors.muted),
+                ),
+                const SizedBox(height: 20),
+                if (step == 0)
+                  TextField(
+                    controller: name,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(prefixIcon: const Icon(Icons.person_outline, color: AppColors.brand), hintText: 'Jean Mwamba', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+                  ),
+                if (step == 1) ...[
+                  PhoneField(controller: phone, onChanged: (_) => network = null),
+                  if (detected != null) ...[
+                    const SizedBox(height: 12),
+                    Text('Réseau présumé : $detected', style: const TextStyle(color: AppColors.muted)),
+                  ],
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: network,
+                    decoration: InputDecoration(filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none), labelText: 'Corriger le réseau'),
+                    items: const [
+                      DropdownMenuItem(value: 'orange', child: Text('Orange Money')),
+                      DropdownMenuItem(value: 'airtel', child: Text('Airtel Money')),
+                      DropdownMenuItem(value: 'mpesa', child: Text('M-Pesa')),
+                      DropdownMenuItem(value: 'afrimoney', child: Text('AfriMoney')),
+                    ],
+                    onChanged: (value) => setState(() => network = value),
+                  ),
+                ],
+                if (step == 2) ...[
+                  OtpBoxes(controller: code, onChanged: (_) {}),
+                  if (previewCode != null) ...[
+                    const SizedBox(height: 12),
+                    Text('Passerelle SMS non branchée. Code de vérification : $previewCode', style: const TextStyle(color: AppColors.night, fontWeight: FontWeight.w700)),
+                  ],
+                ],
               ],
-              onChanged: (value) => setState(() => network = value),
             ),
-          ],
-          if (step == 2) ...[
-            OtpBoxes(controller: code, onChanged: (_) {}),
-            if (previewCode != null) ...[
-              const SizedBox(height: 12),
-              Text('Passerelle SMS non branchée. Code de vérification : $previewCode', style: const TextStyle(color: AppColors.night, fontWeight: FontWeight.w700)),
-            ],
-          ],
-          const SizedBox(height: 22),
-          PrimaryButton(
-            label: 'Continuer',
-            icon: Icons.arrow_forward_rounded,
-            busy: busy,
-            onPressed: () => runAction(context, () async {
-              if (step == 0 && name.text.trim().length < 2) {
-                throw _short();
-              }
-              await _next();
-            }),
+          ),
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+              child: PrimaryButton(
+                label: 'Continuer',
+                icon: Icons.arrow_forward_rounded,
+                busy: busy,
+                onPressed: () => runAction(context, () async {
+                  if (step == 0 && name.text.trim().length < 2) {
+                    throw _short();
+                  }
+                  await _next();
+                }),
+              ),
+            ),
           ),
         ],
       ),

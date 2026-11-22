@@ -95,79 +95,96 @@ class _AmountPageState extends State<AmountPage> {
     final phone = controller.activePhone;
     final rate = controller.settings.usdCdfRate;
     final indicative = value == null ? null : currency == 'USD' ? value! * rate : value! / rate;
+    final canProceed = result != null && result!.results.isNotEmpty && phone != null && value != null;
     return Scaffold(
       appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+      body: Column(
         children: [
-          Text(isWithdrawal ? 'Retirer de l’argent' : 'Déposer de l’argent', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 6),
-          Text(isWithdrawal ? 'Trouvez un PDR près de vous pour retirer votre argent dans la monnaie choisie.' : 'Trouvez un PDR capable de recevoir vos espèces, sans conversion imposée.', style: const TextStyle(color: AppColors.muted)),
-          const SizedBox(height: 16),
-          SoftCard(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                const Expanded(child: Text('Numéro Mobile Money', style: TextStyle(color: AppColors.muted, fontSize: 12))),
-                TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NumbersPage())), child: const Text('Modifier')),
-              ]),
-              Text(formatPhone(phone?.phone ?? ''), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-              if (phone != null) NetworkBadge(network: phone.network, label: phone.networkLabel),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: amount,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    onChanged: (_) => setState(() => result = null),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9., ]'))],
-                    decoration: InputDecoration(labelText: isWithdrawal ? 'Montant à retirer' : 'Montant à déposer', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: currency,
-                  items: const [DropdownMenuItem(value: 'USD', child: Text('USD')), DropdownMenuItem(value: 'CDF', child: Text('CDF'))],
-                  onChanged: (value) => setState(() {
-                    currency = value ?? 'USD';
-                    result = null;
-                  }),
-                ),
-              ]),
-              if (indicative != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text('Équivalent indicatif : ${currency == 'USD' ? formatMoney(indicative, 'CDF') : formatMoney(indicative, 'USD')} — aucune conversion imposée.', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-                ),
-              const SizedBox(height: 12),
-              PrimaryButton(label: 'Rechercher un PDR', icon: Icons.arrow_forward_rounded, busy: busy, onPressed: value == null ? null : () => runAction(context, _search)),
-            ]),
-          ),
-          if (result != null) ...[
-            const SizedBox(height: 16),
-            if (result!.simulated)
-              const InfoBanner(text: 'Localisation indisponible. La recherche est centrée sur Gombe, Kinshasa.'),
-            _NearbyOffer(
-              type: widget.type,
-              count: result!.results.length,
-              amount: value!,
-              currency: currency,
-              onProceed: result!.results.isEmpty
-                  ? null
-                  : () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => DispatchPage(
-                            type: widget.type,
-                            points: result!.results,
-                            amount: value!,
-                            currency: currency,
-                          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              children: [
+                Text(isWithdrawal ? 'Retirer de l’argent' : 'Déposer de l’argent', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 6),
+                Text(isWithdrawal ? 'Trouvez un PDR près de vous pour retirer votre argent dans la monnaie choisie.' : 'Trouvez un PDR capable de recevoir vos espèces, sans conversion imposée.', style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 16),
+                SoftCard(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      const Expanded(child: Text('Numéro Mobile Money', style: TextStyle(color: AppColors.muted, fontSize: 12))),
+                      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NumbersPage())), child: const Text('Modifier')),
+                    ]),
+                    Text(formatPhone(phone?.phone ?? ''), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    if (phone != null) NetworkBadge(network: phone.network, label: phone.networkLabel),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(
+                        child: TextField(
+                          controller: amount,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          onChanged: (_) => setState(() => result = null),
+                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9., ]'))],
+                          decoration: InputDecoration(labelText: isWithdrawal ? 'Montant à retirer' : 'Montant à déposer', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
                         ),
-                      );
-                    },
+                      ),
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: currency,
+                        items: const [DropdownMenuItem(value: 'USD', child: Text('USD')), DropdownMenuItem(value: 'CDF', child: Text('CDF'))],
+                        onChanged: (value) => setState(() {
+                          currency = value ?? 'USD';
+                          result = null;
+                        }),
+                      ),
+                    ]),
+                    if (indicative != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text('Équivalent indicatif : ${currency == 'USD' ? formatMoney(indicative, 'CDF') : formatMoney(indicative, 'USD')} — aucune conversion imposée.', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                      ),
+                    const SizedBox(height: 12),
+                    PrimaryButton(label: 'Rechercher un PDR', icon: Icons.arrow_forward_rounded, busy: busy, onPressed: value == null ? null : () => runAction(context, _search)),
+                  ]),
+                ),
+                if (result != null) ...[
+                  const SizedBox(height: 16),
+                  if (result!.simulated)
+                    const InfoBanner(text: 'Localisation indisponible. La recherche est centrée sur Gombe, Kinshasa.'),
+                  _NearbyOffer(
+                    type: widget.type,
+                    count: result!.results.length,
+                    amount: value!,
+                    currency: currency,
+                  ),
+                ],
+              ],
             ),
-          ],
+          ),
+          if (canProceed)
+            SafeArea(
+              top: false,
+              minimum: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: PrimaryButton(
+                  label: 'Procéder à la demande',
+                  icon: Icons.arrow_forward_rounded,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DispatchPage(
+                          type: widget.type,
+                          points: result!.results,
+                          amount: value!,
+                          currency: currency,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -176,12 +193,11 @@ class _AmountPageState extends State<AmountPage> {
 }
 
 class _NearbyOffer extends StatelessWidget {
-  const _NearbyOffer({required this.type, required this.count, required this.amount, required this.currency, required this.onProceed});
+  const _NearbyOffer({required this.type, required this.count, required this.amount, required this.currency});
   final String type;
   final int count;
   final double amount;
   final String currency;
-  final VoidCallback? onProceed;
 
   @override
   Widget build(BuildContext context) {
@@ -217,8 +233,6 @@ class _NearbyOffer extends StatelessWidget {
             _moneyLine(type == 'withdrawal' ? 'Total à débiter' : 'Transfert Mobile Money', formatMoney(total, currency), strong: true),
           ]),
         ),
-        const SizedBox(height: 16),
-        PrimaryButton(label: 'Procéder à la demande', icon: Icons.arrow_forward_rounded, onPressed: phone == null ? null : onProceed),
       ],
     ]);
   }
@@ -565,7 +579,12 @@ class _DispatchPageState extends State<DispatchPage> {
     try {
       if (currentId != null) {
         final operation = _controller?.operationById(currentId);
-        if (operation == null || operation.status == 'pending' || operation.status == 'pin_required') {
+        // Retrait : pending / PIN. Dépôt : pending (et ticket si encore sur cet écran).
+        final cancellable = operation == null ||
+            operation.status == 'pending' ||
+            operation.status == 'pin_required' ||
+            operation.status == 'payment_confirmed';
+        if (cancellable) {
           await _controller?.postAction(currentId, 'cancel');
         }
       }
@@ -722,50 +741,71 @@ class _DispatchPageState extends State<DispatchPage> {
       },
       child: Scaffold(
         appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
-        body: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-          child: Column(children: [
-            BackgroundActionStrip(
-              type: widget.type,
-              status: operation?.status,
-              busy: buffering || waitingPin,
-            ),
-            const Spacer(),
-            if (buffering) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
-            if (waitingPin) const Icon(Icons.lock_outline_rounded, size: 64, color: AppColors.brand),
-            const SizedBox(height: 22),
-            Text(
-              _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Demande en cours',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _error ??
-                  (_exhausted
-                      ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
-                      : waitingPin
-                          ? 'Un point de retrait a accepté. Saisissez votre code PIN à 4 chiffres pour continuer.'
-                          : 'Chaque point dispose de $_waitSeconds secondes pour valider. Sinon la demande passe au suivant.'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.muted, height: 1.4),
-            ),
-            const Spacer(),
-            if (waitingPin && operation != null)
-              PrimaryButton(label: 'Saisir le code PIN', icon: Icons.lock_outline_rounded, onPressed: () => showPinDialog(context, operation)),
-            if (!_exhausted && _error == null) ...[
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _cancelling ? null : () => runAction(context, _cancelRequest),
-                child: Text(
-                  _cancelling ? 'Annulation…' : 'Annuler la demande',
-                  style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700),
+        body: SafeArea(
+          minimum: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Column(children: [
+                    BackgroundActionStrip(
+                      type: widget.type,
+                      status: operation?.status,
+                      busy: buffering || waitingPin,
+                    ),
+                    const Spacer(),
+                    if (buffering) const SizedBox(width: 72, height: 72, child: CircularProgressIndicator(strokeWidth: 5, color: AppColors.brand)),
+                    if (waitingPin) const Icon(Icons.lock_outline_rounded, size: 64, color: AppColors.brand),
+                    const SizedBox(height: 22),
+                    Text(
+                      _exhausted ? 'Aucun point n’a accepté' : waitingPin ? 'Code PIN requis' : 'Demande en cours',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.night),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _error ??
+                          (_exhausted
+                              ? 'Aucun point de retrait n’a accepté cette demande dans un rayon de ${formatRadiusLabel(context.read<AppController>().searchRadiusM)}.'
+                              : waitingPin
+                                  ? 'Un point de retrait a accepté. Saisissez votre code PIN à 4 chiffres pour continuer.'
+                                  : 'Chaque point dispose de $_waitSeconds secondes pour valider. Sinon la demande passe au suivant.'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.muted, height: 1.4),
+                    ),
+                    const Spacer(),
+                  ]),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (waitingPin && operation != null)
+                      PrimaryButton(label: 'Saisir le code PIN', icon: Icons.lock_outline_rounded, onPressed: () => showPinDialog(context, operation)),
+                    if (!_exhausted && _error == null) ...[
+                      if (waitingPin && operation != null) const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: TextButton(
+                          onPressed: _cancelling ? null : () => runAction(context, _cancelRequest),
+                          child: Text(
+                            _cancelling ? 'Annulation…' : 'Annuler la demande',
+                            style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700, fontSize: 16),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_error != null && !_exhausted)
+                      PrimaryButton(label: 'Retour', onPressed: () => Navigator.pop(context)),
+                  ],
                 ),
               ),
             ],
-            if (_error != null && !_exhausted)
-              PrimaryButton(label: 'Retour', onPressed: () => Navigator.pop(context)),
-          ]),
+          ),
         ),
       ),
     );
@@ -788,48 +828,60 @@ class SummaryPage extends StatelessWidget {
     final total = type == 'withdrawal' ? amount + shownFee : amount;
     return Scaffold(
       appBar: AppBar(title: const FastCashMark(size: 34, wordmark: true), centerTitle: true),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
+      body: Column(
         children: [
-          Text(type == 'withdrawal' ? 'Demande de retrait' : 'Demande de dépôt', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 6),
-          const Text('Vérifiez les informations avant d’envoyer votre demande.', style: TextStyle(color: AppColors.muted)),
-          const SizedBox(height: 16),
-          SoftCard(
-            child: Row(children: [
-              const KioskThumb(),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('PDR sélectionné', style: TextStyle(color: AppColors.brand, fontWeight: FontWeight.w700, fontSize: 12)),
-                Text(point.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                Text('${point.address}, ${point.commune}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-              ])),
-            ]),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              children: [
+                Text(type == 'withdrawal' ? 'Demande de retrait' : 'Demande de dépôt', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 6),
+                const Text('Vérifiez les informations avant d’envoyer votre demande.', style: TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 16),
+                SoftCard(
+                  child: Row(children: [
+                    const KioskThumb(),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('PDR sélectionné', style: TextStyle(color: AppColors.brand, fontWeight: FontWeight.w700, fontSize: 12)),
+                      Text(point.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                      Text('${point.address}, ${point.commune}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                    ])),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+                SoftCard(
+                  child: Column(children: [
+                    _line(type == 'withdrawal' ? 'Montant à retirer' : 'Espèces à remettre', formatMoney(amount, currency)),
+                    _line('Réseau', phone?.networkLabel ?? ''),
+                    _line('Numéro', formatPhone(phone?.phone ?? '')),
+                    _line('Frais de service', formatMoney(shownFee, currency)),
+                    const Divider(),
+                    _line(type == 'withdrawal' ? 'Total à payer' : 'Transfert Mobile Money', formatMoney(total, currency), strong: true),
+                  ]),
+                ),
+                const SizedBox(height: 8),
+                const Text('Les frais sont distincts du montant remis en espèces. Aucun code PIN n’est demandé.', style: TextStyle(color: AppColors.muted, fontSize: 12)),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          SoftCard(
-            child: Column(children: [
-              _line(type == 'withdrawal' ? 'Montant à retirer' : 'Espèces à remettre', formatMoney(amount, currency)),
-              _line('Réseau', phone?.networkLabel ?? ''),
-              _line('Numéro', formatPhone(phone?.phone ?? '')),
-              _line('Frais de service', formatMoney(shownFee, currency)),
-              const Divider(),
-              _line(type == 'withdrawal' ? 'Total à payer' : 'Transfert Mobile Money', formatMoney(total, currency), strong: true),
-            ]),
-          ),
-          const SizedBox(height: 8),
-          const Text('Les frais sont distincts du montant remis en espèces. Aucun code PIN n’est demandé.', style: TextStyle(color: AppColors.muted, fontSize: 12)),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: 'Envoyer la demande',
-            icon: Icons.arrow_forward_rounded,
-            onPressed: phone == null
-                ? null
-                : () => runAction(context, () async {
-                      final created = await context.read<AppController>().createOperation(pdrId: point.id, phone: phone.phone, amount: amount, currency: currency, type: type);
-                      if (!context.mounted) return;
-                      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => FollowPage(operationId: created.id)));
-                    }),
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: PrimaryButton(
+                label: 'Envoyer la demande',
+                icon: Icons.arrow_forward_rounded,
+                onPressed: phone == null
+                    ? null
+                    : () => runAction(context, () async {
+                          final created = await context.read<AppController>().createOperation(pdrId: point.id, phone: phone.phone, amount: amount, currency: currency, type: type);
+                          if (!context.mounted) return;
+                          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => FollowPage(operationId: created.id)));
+                        }),
+              ),
+            ),
           ),
         ],
       ),
@@ -1000,6 +1052,7 @@ class _StatusPage extends StatelessWidget {
     final refused = operation.status == 'refused';
     final waiting = operation.status == 'pending';
     final needsPin = operation.status == 'pin_required';
+    final canCancel = waiting || needsPin || operation.status == 'payment_confirmed';
     return Scaffold(
       appBar: AppBar(title: Text(operation.reference)),
       body: ListView(
@@ -1033,16 +1086,30 @@ class _StatusPage extends StatelessWidget {
               onPressed: () => showPinDialog(context, operation),
             ),
           if (refused) _Alternatives(operation: operation),
-          if (waiting || needsPin)
-            TextButton(
-              onPressed: () => runAction(context, () async {
-                await context.read<AppController>().postAction(operation.id, 'cancel');
-                if (context.mounted) Navigator.pop(context);
-              }),
-              child: const Text('Annuler la demande', style: TextStyle(color: AppColors.danger)),
-            ),
         ],
       ),
+      bottomNavigationBar: canCancel
+          ? SafeArea(
+              minimum: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: TextButton(
+                    onPressed: () => runAction(context, () async {
+                      await context.read<AppController>().postAction(operation.id, 'cancel');
+                      if (context.mounted) Navigator.pop(context);
+                    }),
+                    child: const Text(
+                      'Annuler la demande',
+                      style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          : null,
     );
   }
 
@@ -1141,19 +1208,31 @@ void goAppHome(BuildContext context) {
   Navigator.of(context).popUntil((route) => route.isFirst);
 }
 
-class TokenPage extends StatelessWidget {
+class TokenPage extends StatefulWidget {
   const TokenPage({super.key, required this.operation});
   final CashOperation operation;
 
   @override
+  State<TokenPage> createState() => _TokenPageState();
+}
+
+class _TokenPageState extends State<TokenPage> {
+  bool _leftToReceived = false;
+
+  void _goReceivedIfDone(CashOperation live) {
+    if (_leftToReceived) return;
+    if (live.status != 'cash_delivered' && live.status != 'completed') return;
+    _leftToReceived = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => _ReceivedPage(operation: live)));
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final live = context.watch<AppController>().operationById(operation.id) ?? operation;
-    if (live.status == 'cash_delivered' || live.status == 'completed') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!context.mounted) return;
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => _ReceivedPage(operation: live)));
-      });
-    }
+    final live = context.watch<AppController>().operationById(widget.operation.id) ?? widget.operation;
+    _goReceivedIfDone(live);
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -1164,6 +1243,7 @@ class TokenPage extends StatelessWidget {
         centerTitle: true,
       ),
       body: SafeArea(
+        minimum: const EdgeInsets.only(bottom: 12),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
           children: [
@@ -1236,12 +1316,14 @@ class TokenPage extends StatelessWidget {
             ])),
             const SizedBox(height: 16),
             Row(children: [
-              if (NotificationFeed.destinationEnabled(live.status)) ...[
+              if (NotificationFeed.destinationVisible(live.status)) ...[
                 Expanded(
                   child: GhostButton(
                     label: 'Itinéraire',
                     icon: Icons.near_me_outlined,
-                    onPressed: () => openRoute(context, live),
+                    onPressed: NotificationFeed.destinationEnabled(live.status)
+                        ? () => openRoute(context, live)
+                        : null,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1250,6 +1332,20 @@ class TokenPage extends StatelessWidget {
             ]),
             const SizedBox(height: 12),
             GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
+            if (live.status == 'payment_confirmed' && live.tokenStatus == 'active') ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => runAction(context, () async {
+                  await context.read<AppController>().postAction(live.id, 'cancel');
+                  if (context.mounted) goAppHome(context);
+                }),
+                child: const Text(
+                  'Annuler la demande',
+                  style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -1326,16 +1422,59 @@ class _CornerPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _ReceivedPage extends StatelessWidget {
+class _ReceivedPage extends StatefulWidget {
   const _ReceivedPage({required this.operation});
   final CashOperation operation;
 
   @override
+  State<_ReceivedPage> createState() => _ReceivedPageState();
+}
+
+class _ReceivedPageState extends State<_ReceivedPage> {
+  bool _ratingPrompted = false;
+  bool _successToastShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final controller = context.read<AppController>();
+      // Récupère la notif « Retrait/Dépôt effectué » + statut à jour.
+      await controller.refreshLight();
+      if (!mounted) return;
+      final live = controller.operationById(widget.operation.id) ?? widget.operation;
+      if (!_successToastShown) {
+        _successToastShown = true;
+        final msg = live.isWithdrawal
+            ? 'Retrait terminé avec succès.'
+            : 'Dépôt terminé avec succès.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppColors.night,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      if (_ratingPrompted) return;
+      if (!live.isWithdrawal) return;
+      if (live.ratingStars != null) return;
+      if (live.status != 'completed' && live.status != 'cash_delivered') return;
+      _ratingPrompted = true;
+      await showRatingDialog(context, live);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final title = operation.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué';
-    final body = operation.isWithdrawal
-        ? '${formatMoney(operation.amount, operation.currency)} ont été remis au ${operation.pdrName}.'
-        : '${formatMoney(operation.amount, operation.currency)} ont été déposés au ${operation.pdrName}.';
+    final live = context.watch<AppController>().operationById(widget.operation.id) ?? widget.operation;
+    final title = live.isWithdrawal ? 'Retrait effectué' : 'Dépôt effectué';
+    final body = live.isWithdrawal
+        ? '${formatMoney(live.amount, live.currency)} ont été remis au ${live.pdrName}.'
+        : '${formatMoney(live.amount, live.currency)} ont été déposés au ${live.pdrName}.';
+    final needsRating = live.isWithdrawal && live.ratingStars == null;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => goAppHome(context)),
@@ -1343,20 +1482,37 @@ class _ReceivedPage extends StatelessWidget {
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(children: [
-            const Spacer(),
-            const Icon(Icons.check_circle, color: AppColors.mint, size: 72),
-            const SizedBox(height: 12),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-            const SizedBox(height: 8),
-            Text(body, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted, height: 1.4)),
-            const Spacer(),
-            PrimaryButton(label: 'Noter le point', icon: Icons.star_rounded, onPressed: () => showRatingDialog(context, operation)),
-            const SizedBox(height: 12),
-            GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
-          ]),
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                child: Column(children: [
+                  const Spacer(),
+                  const Icon(Icons.check_circle, color: AppColors.mint, size: 72),
+                  const SizedBox(height: 12),
+                  Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  const SizedBox(height: 8),
+                  Text(body, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted, height: 1.4)),
+                  const Spacer(),
+                ]),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (needsRating) ...[
+                    PrimaryButton(label: 'Noter le point', icon: Icons.star_rounded, onPressed: () => showRatingDialog(context, live)),
+                    const SizedBox(height: 12),
+                  ],
+                  GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1444,34 +1600,46 @@ class _RatingPageState extends State<RatingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Évaluation')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
+      body: Column(
         children: [
-          Text('Comment s’est passée votre visite au ${widget.operation.pdrName} ?', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: AppColors.night)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(5, (index) {
-              final selected = index < stars;
-              return IconButton(
-                onPressed: () => setState(() => stars = index + 1),
-                icon: Icon(selected ? Icons.star_rounded : Icons.star_outline_rounded, color: AppColors.brand, size: 36),
-              );
-            }),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              children: [
+                Text('Comment s’est passée votre visite au ${widget.operation.pdrName} ?', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: AppColors.night)),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(5, (index) {
+                    final selected = index < stars;
+                    return IconButton(
+                      onPressed: () => setState(() => stars = index + 1),
+                      icon: Icon(selected ? Icons.star_rounded : Icons.star_outline_rounded, color: AppColors.brand, size: 36),
+                    );
+                  }),
+                ),
+                TextField(
+                  controller: comment,
+                  maxLines: 4,
+                  decoration: InputDecoration(hintText: 'Ajouter un commentaire', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+                ),
+              ],
+            ),
           ),
-          TextField(
-            controller: comment,
-            maxLines: 4,
-            decoration: InputDecoration(hintText: 'Ajouter un commentaire', filled: true, fillColor: AppColors.mist, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
-          ),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: 'Valider l’évaluation',
-            onPressed: () => runAction(context, () async {
-              await context.read<AppController>().postAction(widget.operation.id, 'rate', body: {'stars': stars, 'comment': comment.text});
-              if (!context.mounted) return;
-              Navigator.popUntil(context, (route) => route.isFirst);
-            }),
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: PrimaryButton(
+                label: 'Valider l’évaluation',
+                onPressed: () => runAction(context, () async {
+                  await context.read<AppController>().postAction(widget.operation.id, 'rate', body: {'stars': stars, 'comment': comment.text});
+                  if (!context.mounted) return;
+                  Navigator.popUntil(context, (route) => route.isFirst);
+                }),
+              ),
+            ),
           ),
         ],
       ),
@@ -1492,20 +1660,35 @@ class DepositConfirmedPage extends StatelessWidget {
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(children: [
-            const Spacer(),
-            const Icon(Icons.payments_rounded, color: AppColors.mint, size: 72),
-            const SizedBox(height: 12),
-            const Text('Transfert préparé', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
-            const SizedBox(height: 8),
-            Text('L’ordre de ${formatMoney(operation.amount, operation.currency)} vers ${formatPhone(operation.phone)} (${operation.networkLabel}) est prêt. La session opérateur est clôturée.', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
-            const Spacer(),
-            PrimaryButton(label: 'Évaluer le PDR', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RatingPage(operation: operation)))),
-            const SizedBox(height: 12),
-            GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
-          ]),
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                child: Column(children: [
+                  const Spacer(),
+                  const Icon(Icons.payments_rounded, color: AppColors.mint, size: 72),
+                  const SizedBox(height: 12),
+                  const Text('Transfert préparé', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
+                  const SizedBox(height: 8),
+                  Text('L’ordre de ${formatMoney(operation.amount, operation.currency)} vers ${formatPhone(operation.phone)} (${operation.networkLabel}) est prêt. La session opérateur est clôturée.', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
+                  const Spacer(),
+                ]),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PrimaryButton(label: 'Évaluer le PDR', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RatingPage(operation: operation)))),
+                  const SizedBox(height: 12),
+                  GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

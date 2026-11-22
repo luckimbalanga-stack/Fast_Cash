@@ -43,6 +43,8 @@ class UserShellState extends State<UserShell> {
 
   void _offerRating(List<CashOperation> operations) {
     if (promptingId != null) return;
+    // Ne pas ouvrir derrière une page empilée (ticket / reçu) — le popup part de _ReceivedPage.
+    if (Navigator.of(context).canPop()) return;
     final waiting = operations.where((operation) => operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed') && operation.ratingStars == null);
     if (waiting.isEmpty) {
       ratingPromptId = null;
@@ -52,7 +54,7 @@ class UserShellState extends State<UserShell> {
     if (ratingPromptId == operation.id) return;
     ratingPromptId = operation.id;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
+      if (!mounted || Navigator.of(context).canPop()) return;
       await showRatingDialog(context, operation);
       if (!mounted) return;
       final stillWaiting = context.read<AppController>().operationById(operation.id);

@@ -116,135 +116,144 @@ class _IncomingRequestCallState extends State<IncomingRequestCall> with SingleTi
     return Material(
       color: const Color(0xF00B1628),
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
-          child: Column(
-            children: [
-              Text(
-                op.isWithdrawal ? 'Appel entrant · Retrait' : 'Appel entrant · Dépôt',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.72),
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6,
-                ),
-              ),
-              const SizedBox(height: 28),
-              AnimatedBuilder(
-                animation: _pulse,
-                builder: (context, child) {
-                  final scale = 1 + (_pulse.value * 0.08);
-                  return Transform.scale(scale: scale, child: child);
-                },
-                child: Container(
-                  width: 118,
-                  height: 118,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.brand.withValues(alpha: 0.18),
-                    border: Border.all(color: AppColors.brand, width: 2.5),
-                  ),
-                  child: Icon(
-                    op.isWithdrawal ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-                    color: AppColors.brand,
-                    size: 48,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 22),
-              Text(
-                op.userName,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                typeLabel,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                formatMoney(op.amount, op.currency),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.brand, fontSize: 34, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 18),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-                ),
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
                 child: Column(
                   children: [
-                    _detail('Référence', op.reference),
-                    _detail('Réseau', op.networkLabel),
-                    _detail('Numéro', formatPhone(op.phone)),
-                    _detail('Frais', formatMoney(op.fees, op.currency)),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: 92,
-                height: 92,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
+                    Text(
+                      op.isWithdrawal ? 'Appel entrant · Retrait' : 'Appel entrant · Dépôt',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.72),
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    AnimatedBuilder(
+                      animation: _pulse,
+                      builder: (context, child) {
+                        final scale = 1 + (_pulse.value * 0.08);
+                        return Transform.scale(scale: scale, child: child);
+                      },
+                      child: Container(
+                        width: 118,
+                        height: 118,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.brand.withValues(alpha: 0.18),
+                          border: Border.all(color: AppColors.brand, width: 2.5),
+                        ),
+                        child: Icon(
+                          op.isWithdrawal ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                          color: AppColors.brand,
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      op.userName,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      typeLabel,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      formatMoney(op.amount, op.currency),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.brand, fontSize: 34, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                      ),
+                      child: Column(
+                        children: [
+                          _detail('Référence', op.reference),
+                          _detail('Réseau', op.networkLabel),
+                          _detail('Numéro', formatPhone(op.phone)),
+                          _detail('Frais', formatMoney(op.fees, op.currency)),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
                     SizedBox(
                       width: 92,
                       height: 92,
-                      child: CircularProgressIndicator(
-                        value: progress,
-                        strokeWidth: 6,
-                        backgroundColor: Colors.white.withValues(alpha: 0.12),
-                        color: _secondsLeft <= 5 ? AppColors.danger : AppColors.mint,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox(
+                            width: 92,
+                            height: 92,
+                            child: CircularProgressIndicator(
+                              value: progress,
+                              strokeWidth: 6,
+                              backgroundColor: Colors.white.withValues(alpha: 0.12),
+                              color: _secondsLeft <= 5 ? AppColors.danger : AppColors.mint,
+                            ),
+                          ),
+                          Text(
+                            '$_secondsLeft',
+                            style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800),
+                          ),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 10),
                     Text(
-                      '$_secondsLeft',
-                      style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800),
+                      _secondsLeft > 0 ? 'Répondez avant la fin du délai' : 'Délai écoulé',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
                     ),
+                    const Spacer(),
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
-              Text(
-                _secondsLeft > 0 ? 'Répondez avant la fin du délai' : 'Délai écoulé',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
-              ),
-              const SizedBox(height: 28),
-              if (_busy)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 18),
-                  child: CircularProgressIndicator(color: AppColors.brand),
-                )
-              else
-                Row(
-                  children: [
-                    Expanded(
-                      child: _CallAction(
-                        label: 'Refuser',
-                        color: AppColors.danger,
-                        icon: Icons.call_end_rounded,
-                        onPressed: _secondsLeft <= 0 ? null : () => _run(widget.onRefuse),
-                      ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+              child: _busy
+                  ? const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: CircularProgressIndicator(color: AppColors.brand),
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: _CallAction(
+                            label: 'Refuser',
+                            color: AppColors.danger,
+                            icon: Icons.call_end_rounded,
+                            onPressed: _secondsLeft <= 0 ? null : () => _run(widget.onRefuse),
+                          ),
+                        ),
+                        const SizedBox(width: 18),
+                        Expanded(
+                          child: _CallAction(
+                            label: 'Valider',
+                            color: AppColors.mint,
+                            icon: Icons.call_rounded,
+                            onPressed: _secondsLeft <= 0 ? null : () => _run(widget.onAccept),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: _CallAction(
-                        label: 'Valider',
-                        color: AppColors.mint,
-                        icon: Icons.call_rounded,
-                        onPressed: _secondsLeft <= 0 ? null : () => _run(widget.onAccept),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

@@ -6,7 +6,14 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from shared.commission_ranges import commission_cut_cdf, parse_commission_ranges, validate_commission_ranges
+from shared.commission_ranges import (
+    TX_DEPOSIT,
+    TX_WITHDRAWAL,
+    commission_cut_cdf,
+    filter_ranges_by_type,
+    parse_commission_ranges,
+    validate_commission_ranges,
+)
 from shared.http import PDR_URL, internal_post, notify
 from shared.mobile_money import prepare_instruction
 from shared.models import Operation, Pdr, PhoneNumber, Setting, TimelineEvent, User
@@ -54,13 +61,21 @@ def _touch(db: Session, op: Operation, status: str, label: str) -> None:
     db.add(TimelineEvent(operation_id=op.id, status=status, label=label, created_at=op.updated_at))
 
 
-def _commission_ranges(db: Session) -> list[dict[str, float]]:
+def _commission_ranges(db: Session) -> list[dict]:
     payload = settings_payload(db)
     ranges = payload.get("commission_ranges") or []
-    # settings_payload enrichit avec CDF/% — on re-normalise sur min/max/cut USD.
+    # settings_payload enrichit avec CDF/% — on re-normalise sur champs canoniques.
     return validate_commission_ranges(
         parse_commission_ranges(
-            [{"min_usd": row["min_usd"], "max_usd": row["max_usd"], "cut_usd": row["cut_usd"]} for row in ranges]
+            [
+                {
+                    "min_usd": row["min_usd"],
+                    "max_usd": row["max_usd"],
+                    "cut_usd": row["cut_usd"],
+                    "transaction_type": row.get("transaction_type", TX_WITHDRAWAL),
+                }
+                for row in ranges
+            ]
         )
     )
 
@@ -68,14 +83,42 @@ def _commission_ranges(db: Session) -> list[dict[str, float]]:
 def _liquidity(db: Session, path: str, op: Operation) -> None:
     """Mouvements liquidité PDR toujours en CDF.
 
-    Retrait : coupe = plage de commission (Z USD → CDF), pas le montant retiré.
-    Dépôt / autres : montant converti en CDF.
+    Retrait : coupe = plage commission type retrait (Z USD → CDF).
+    Dépôt receive : crédite le montant CDF, puis coupe optionnelle si plages dépôt configurées.
     """
     rate = float(_setting(db, "usd_cdf_rate", "2880"))
+    ranges = _commission_ranges(db)
     if op.type == "withdrawal":
-        amount = commission_cut_cdf(_commission_ranges(db), op.amount, op.currency, rate)
-    else:
-        amount = amount_cdf_rounded(op, rate)
+        amount = commission_cut_cdf(
+            ranges,
+            op.amount,
+            op.currency,
+            rate,
+            transaction_type=TX_WITHDRAWAL,
+        )
+        internal_post(PDR_URL, path, {"currency": "CDF", "amount": amount})
+        return
+
+    if path.endswith("/liquidity/receive"):
+        received = amount_cdf_rounded(op, rate)
+        internal_post(PDR_URL, path, {"currency": "CDF", "amount": received})
+        if filter_ranges_by_type(ranges, TX_DEPOSIT):
+            cut = commission_cut_cdf(
+                ranges,
+                op.amount,
+                op.currency,
+                rate,
+                transaction_type=TX_DEPOSIT,
+            )
+            if cut > 0:
+                internal_post(
+                    PDR_URL,
+                    f"/pdr/{op.pdr_id}/liquidity/consume",
+                    {"currency": "CDF", "amount": cut},
+                )
+        return
+
+    amount = amount_cdf_rounded(op, rate)
     internal_post(PDR_URL, path, {"currency": "CDF", "amount": amount})
 
 
