@@ -265,13 +265,18 @@ class _HistoryPageState extends State<HistoryPage> {
                   final operation = items[index];
                   final hasToken = operation.isWithdrawal && (operation.tokenCode ?? '').isNotEmpty;
                   final tokenReady = hasToken && operation.status == 'payment_confirmed' && operation.tokenStatus == 'active';
+                  final done = operation.status == 'completed' || operation.status == 'cash_delivered';
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: SoftCard(
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => tokenReady ? TokenPage(operation: operation) : OperationDetailPage(operationId: operation.id),
+                          builder: (_) => tokenReady
+                              ? TokenPage(operation: operation)
+                              : done
+                                  ? ReceivedPage(operation: operation)
+                                  : OperationDetailPage(operationId: operation.id),
                         ),
                       ),
                       child: Row(children: [
@@ -699,10 +704,18 @@ class NotificationsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final active = controller.hasActiveDispatch ? controller.activeDispatch : null;
+    final inbox = controller.notifications
+        .where(
+          (item) => NotificationFeed.isClientInboxItem(
+            item,
+            operation: item.operationId == null ? null : controller.operationById(item.operationId!),
+          ),
+        )
+        .toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Notifications')),
       body: NotificationFeed(
-        items: controller.notifications,
+        items: inbox,
         resolveOperation: controller.operationById,
         onOpenDestination: (operation) => openRoute(context, operation),
         activeDispatchBanner: active == null
@@ -755,7 +768,24 @@ class NotificationsPage extends StatelessWidget {
         onOpen: (item) async {
           if (!item.isRead) await runAction(context, () => controller.markRead(item.id));
           if (!context.mounted || item.operationId == null) return;
-          Navigator.push(context, MaterialPageRoute(builder: (_) => FollowPage(operationId: item.operationId!)));
+          var operation = controller.operationById(item.operationId!);
+          if (operation == null) {
+            await controller.refreshLight();
+            if (!context.mounted) return;
+            operation = controller.operationById(item.operationId!);
+          }
+          if (operation == null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => FollowPage(operationId: item.operationId!, fromNotification: true)),
+            );
+            return;
+          }
+          // Sans bandeau d’actions ni animations de chronologie.
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => operationLandingPage(operation!, fromNotification: true)),
+          );
         },
       ),
     );

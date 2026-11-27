@@ -489,7 +489,7 @@ class _DispatchPageState extends State<DispatchPage> {
           return;
         }
         if (existing != null && (existing.status == 'cash_delivered' || existing.status == 'completed')) {
-          _leaveTo(_ReceivedPage(operation: existing));
+          _leaveTo(ReceivedPage(operation: existing, celebrate: true));
           return;
         }
         if (existing != null && (existing.status == 'cancelled' || existing.status == 'refused')) {
@@ -579,11 +579,10 @@ class _DispatchPageState extends State<DispatchPage> {
     try {
       if (currentId != null) {
         final operation = _controller?.operationById(currentId);
-        // Retrait : pending / PIN. Dépôt : pending (et ticket si encore sur cet écran).
+        // Annulation seulement avant le ticket (pending / PIN).
         final cancellable = operation == null ||
             operation.status == 'pending' ||
-            operation.status == 'pin_required' ||
-            operation.status == 'payment_confirmed';
+            operation.status == 'pin_required';
         if (cancellable) {
           await _controller?.postAction(currentId, 'cancel');
         }
@@ -615,7 +614,7 @@ class _DispatchPageState extends State<DispatchPage> {
       return;
     }
     if (operation.status == 'cash_delivered' || operation.status == 'completed') {
-      _leaveTo(_ReceivedPage(operation: operation));
+      _leaveTo(ReceivedPage(operation: operation, celebrate: true));
       return;
     }
     if (operation.status != 'pending') {
@@ -727,7 +726,7 @@ class _DispatchPageState extends State<DispatchPage> {
       if (operation.status == 'payment_confirmed') {
         _leaveTo(TokenPage(operation: operation), delay: hold);
       } else if (operation.status == 'cash_delivered' || operation.status == 'completed') {
-        _leaveTo(_ReceivedPage(operation: operation), delay: hold);
+        _leaveTo(ReceivedPage(operation: operation, celebrate: true), delay: hold);
       }
     }
     final waitingPin = operation?.status == 'pin_required';
@@ -1004,9 +1003,25 @@ Widget _pinLine(String label, String value) {
   );
 }
 
+/// Page cible selon le statut (notif, historique, reprise).
+Widget operationLandingPage(
+  CashOperation operation, {
+  bool celebrate = false,
+  bool fromNotification = false,
+}) {
+  if (operation.status == 'payment_confirmed') {
+    return TokenPage(operation: operation);
+  }
+  if (operation.status == 'cash_delivered' || operation.status == 'completed') {
+    return ReceivedPage(operation: operation, celebrate: celebrate);
+  }
+  return FollowPage(operationId: operation.id, fromNotification: fromNotification);
+}
+
 class FollowPage extends StatefulWidget {
-  const FollowPage({super.key, required this.operationId});
+  const FollowPage({super.key, required this.operationId, this.fromNotification = false});
   final int operationId;
+  final bool fromNotification;
 
   @override
   State<FollowPage> createState() => _FollowPageState();
@@ -1014,6 +1029,7 @@ class FollowPage extends StatefulWidget {
 
 class _FollowPageState extends State<FollowPage> {
   bool _leaving = false;
+  bool? _openedTerminal;
 
   void _leaveTo(Widget page, {Duration delay = Duration.zero}) {
     if (_leaving || !mounted) return;
@@ -1030,40 +1046,51 @@ class _FollowPageState extends State<FollowPage> {
     if (operation == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (!_leaving) {
-      const hold = Duration(milliseconds: 1600);
-      if (operation.status == 'payment_confirmed') {
-        _leaveTo(TokenPage(operation: operation), delay: hold);
-      } else if (operation.status == 'cash_delivered' || operation.status == 'completed') {
-        _leaveTo(_ReceivedPage(operation: operation), delay: hold);
-      }
+    final terminal = operation.status == 'cash_delivered' || operation.status == 'completed';
+    final ticket = operation.status == 'payment_confirmed';
+    final alreadyDone = terminal || ticket;
+    _openedTerminal ??= alreadyDone;
+    if (!_leaving && alreadyDone) {
+      // Notif / déjà terminé → immédiat. Transition live → court délai.
+      final fromLive = !widget.fromNotification && _openedTerminal == false;
+      final delay = fromLive ? const Duration(milliseconds: 1600) : Duration.zero;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _leaving) return;
+        if (ticket) {
+          _leaveTo(TokenPage(operation: operation), delay: delay);
+        } else if (terminal) {
+          _leaveTo(ReceivedPage(operation: operation, celebrate: fromLive), delay: delay);
+        }
+      });
     }
-    // Pendant le délai, on garde le suivi visible pour voir la chronologie s’allonger.
-    return _StatusPage(operation: operation);
+    return _StatusPage(operation: operation, showBackgroundActions: !widget.fromNotification);
   }
 }
 
 class _StatusPage extends StatelessWidget {
-  const _StatusPage({required this.operation});
+  const _StatusPage({required this.operation, this.showBackgroundActions = true});
   final CashOperation operation;
+  final bool showBackgroundActions;
 
   @override
   Widget build(BuildContext context) {
     final refused = operation.status == 'refused';
     final waiting = operation.status == 'pending';
     final needsPin = operation.status == 'pin_required';
-    final canCancel = waiting || needsPin || operation.status == 'payment_confirmed';
+    final canCancel = waiting || needsPin;
     return Scaffold(
       appBar: AppBar(title: Text(operation.reference)),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          BackgroundActionStrip(
-            type: operation.type,
-            status: operation.status,
-            busy: waiting || needsPin,
-          ),
-          const SizedBox(height: 16),
+          if (showBackgroundActions) ...[
+            BackgroundActionStrip(
+              type: operation.type,
+              status: operation.status,
+              busy: waiting || needsPin,
+            ),
+            const SizedBox(height: 16),
+          ],
           StatusPill(status: operation.status, type: operation.type),
           const SizedBox(height: 16),
           Text(_title(), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.night)),
@@ -1218,14 +1245,34 @@ class TokenPage extends StatefulWidget {
 
 class _TokenPageState extends State<TokenPage> {
   bool _leftToReceived = false;
+  Timer? _fastPoll;
+
+  @override
+  void initState() {
+    super.initState();
+    // Poll rapide tant que le ticket est à l’écran (scan PDR → succès sans attendre 6–10 s).
+    _fastPoll = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted || _leftToReceived) return;
+      unawaited(context.read<AppController>().refreshLight());
+    });
+  }
+
+  @override
+  void dispose() {
+    _fastPoll?.cancel();
+    super.dispose();
+  }
 
   void _goReceivedIfDone(CashOperation live) {
     if (_leftToReceived) return;
     if (live.status != 'cash_delivered' && live.status != 'completed') return;
     _leftToReceived = true;
+    _fastPoll?.cancel();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => _ReceivedPage(operation: live)));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => ReceivedPage(operation: live, celebrate: true)),
+      );
     });
   }
 
@@ -1332,19 +1379,6 @@ class _TokenPageState extends State<TokenPage> {
             ]),
             const SizedBox(height: 12),
             GhostButton(label: 'Retour', icon: Icons.home_outlined, onPressed: () => goAppHome(context)),
-            if (live.status == 'payment_confirmed' && live.tokenStatus == 'active') ...[
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => runAction(context, () async {
-                  await context.read<AppController>().postAction(live.id, 'cancel');
-                  if (context.mounted) goAppHome(context);
-                }),
-                child: const Text(
-                  'Annuler la demande',
-                  style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
             const SizedBox(height: 8),
           ],
         ),
@@ -1422,15 +1456,17 @@ class _CornerPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _ReceivedPage extends StatefulWidget {
-  const _ReceivedPage({required this.operation});
+class ReceivedPage extends StatefulWidget {
+  const ReceivedPage({super.key, required this.operation, this.celebrate = false});
   final CashOperation operation;
+  /// Toast + popup note (première arrivée après scan). Faux à la réouverture via notif.
+  final bool celebrate;
 
   @override
-  State<_ReceivedPage> createState() => _ReceivedPageState();
+  State<ReceivedPage> createState() => _ReceivedPageState();
 }
 
-class _ReceivedPageState extends State<_ReceivedPage> {
+class _ReceivedPageState extends State<ReceivedPage> {
   bool _ratingPrompted = false;
   bool _successToastShown = false;
 
@@ -1444,7 +1480,7 @@ class _ReceivedPageState extends State<_ReceivedPage> {
       await controller.refreshLight();
       if (!mounted) return;
       final live = controller.operationById(widget.operation.id) ?? widget.operation;
-      if (!_successToastShown) {
+      if (widget.celebrate && !_successToastShown) {
         _successToastShown = true;
         final msg = live.isWithdrawal
             ? 'Retrait terminé avec succès.'
@@ -1459,7 +1495,6 @@ class _ReceivedPageState extends State<_ReceivedPage> {
         );
       }
       if (_ratingPrompted) return;
-      if (!live.isWithdrawal) return;
       if (live.ratingStars != null) return;
       if (live.status != 'completed' && live.status != 'cash_delivered') return;
       _ratingPrompted = true;
@@ -1474,7 +1509,7 @@ class _ReceivedPageState extends State<_ReceivedPage> {
     final body = live.isWithdrawal
         ? '${formatMoney(live.amount, live.currency)} ont été remis au ${live.pdrName}.'
         : '${formatMoney(live.amount, live.currency)} ont été déposés au ${live.pdrName}.';
-    final needsRating = live.isWithdrawal && live.ratingStars == null;
+    final needsRating = live.ratingStars == null;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => goAppHome(context)),

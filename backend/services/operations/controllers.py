@@ -60,7 +60,8 @@ def lookup_token(code: str, authorization: str | None = Header(default=None), db
     "/operations/token/redeem",
     summary="Scanner / valider un ticket",
     description=(
-        "Clôture l’opération (`completed`). Retrait : consomme la commission CDF réservée. "
+        "Clôture l’opération (`completed`). Retrait : la commission a déjà été coupée au PIN "
+        "(re-coupe au scan seulement si encore réservée — compat). "
         "Dépôt : crédite le montant converti en CDF. Notifie client + PDR."
     ),
     tags=["Opérations"],
@@ -82,7 +83,8 @@ def get_operation(operation_id: int, authorization: str | None = Header(default=
     "/operations/{operation_id}/accept",
     summary="Accepter une demande (PDR)",
     description=(
-        "Retrait : réserve la **commission** (plage → CDF) puis passe en `pin_required` + notif client. "
+        "Retrait : réserve la **commission** (plage → CDF) puis passe en `pin_required` + notif client "
+        "(la coupe définitive a lieu au PIN). "
         "Dépôt : ticket immédiat (`payment_confirmed`) + notif client. "
         "Auth PDR. La liquidité est toujours gérée en CDF."
     ),
@@ -107,7 +109,16 @@ def refuse(operation_id: int, authorization: str | None = Header(default=None), 
     return services.refuse(db, pdr_id, operation_id)
 
 
-@router.post("/operations/{operation_id}/authorize")
+@router.post(
+    "/operations/{operation_id}/authorize",
+    summary="Autoriser avec le code PIN (client)",
+    description=(
+        "Retrait : valide le PIN, coupe la commission CDF dans la liquidité du PDR, "
+        "puis active le ticket (`payment_confirmed`). "
+        "Dépôt (ancien flux) : confirme le PIN sans coupe liquidité."
+    ),
+    tags=["Opérations"],
+)
 def authorize(operation_id: int, body: PinBody, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     _role, user_id = require_roles(authorization, "user")
     return services.authorize(db, user_id, operation_id, body.pin)

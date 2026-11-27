@@ -56,6 +56,30 @@ class NotificationFeed extends StatelessWidget {
   static bool destinationVisible(String status) =>
       destinationEnabled(status) || status == 'completed' || status == 'cash_delivered';
 
+  /// Boîte client : uniquement acceptées / effectuées (pas refus ni annulations).
+  static bool isClientInboxItem(AppNotification item, {CashOperation? operation}) {
+    final title = item.title.toLowerCase();
+    if (title.contains('refus') || title.contains('annul') || title.contains('rejet')) {
+      return false;
+    }
+    if (operation != null) {
+      final status = operation.status;
+      if (status == 'refused' || status == 'cancelled') return false;
+    }
+    if (title.contains('accept') ||
+        title.contains('effectu') ||
+        title.contains('réussi') ||
+        title.contains('reussi') ||
+        title.contains('terminé') ||
+        title.contains('termine')) {
+      return true;
+    }
+    if (operation != null) {
+      return destinationVisible(operation.status) || operation.status == 'pin_required';
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final unread = items.where((item) => !item.isRead).length;
@@ -77,7 +101,7 @@ class NotificationFeed extends StatelessWidget {
           SizedBox(height: 18),
           Text('Aucune notification', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.night)),
           SizedBox(height: 8),
-          Text('Les acceptations et jetons de vos opérations s’afficheront ici.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, height: 1.4)),
+          Text('Seules les demandes acceptées et effectuées s’affichent ici.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted, height: 1.4)),
         ]),
       ),
     );

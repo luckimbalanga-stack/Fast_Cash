@@ -40,7 +40,8 @@ _http_client: httpx.AsyncClient | None = None
 @asynccontextmanager
 async def lifespan(_app):
     global _http_client
-    _http_client = httpx.AsyncClient(timeout=20)
+    # Neon / cold-start : un proxy trop court renvoie 503 pendant que le service se réveille.
+    _http_client = httpx.AsyncClient(timeout=60)
     try:
         yield
     finally:
@@ -66,7 +67,7 @@ def root():
     }
 
 
-DEPLOY_STAMP = "commission-ranges-swagger-2026-11-21"
+DEPLOY_STAMP = "liquidity-cut-on-pin-2026-11-27"
 
 
 @app.get("/api/health")
@@ -105,7 +106,7 @@ async def proxy(full_path: str, request: Request):
         if key.lower() not in {"host", "content-length"}
     }
     body = await request.body()
-    client = _http_client or httpx.AsyncClient(timeout=20)
+    client = _http_client or httpx.AsyncClient(timeout=60)
     owns_client = _http_client is None
     try:
         response = await client.request(request.method, url, content=body, headers=headers)

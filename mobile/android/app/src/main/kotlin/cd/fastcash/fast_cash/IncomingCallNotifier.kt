@@ -8,7 +8,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.RingtoneManager
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -20,7 +21,8 @@ import androidx.core.content.ContextCompat
  * pour faire remonter l'écran Fast-Cash au-dessus des autres apps / verrouillage.
  */
 object IncomingCallNotifier {
-    const val CHANNEL_ID = "pdr_incoming_call_v3"
+    // v4 : sonnerie propriétaire Fast-Cash (res/raw/fastcash_ring) — le son du canal est immuable.
+    const val CHANNEL_ID = "pdr_incoming_call_v4"
     const val NOTIF_ID = 71001
     const val ACTION_INCOMING = "cd.fastcash.fast_cash.INCOMING_CALL"
     const val EXTRA_CALL = "pdr_incoming_call"
@@ -31,11 +33,19 @@ object IncomingCallNotifier {
     @Volatile
     private var lastRingedId: Int = -1
 
+    @Volatile
+    private var ringtonePlayer: MediaPlayer? = null
+
+    /** Sonnerie intégrée (assets/fastCash.mp3 → res/raw/fastcash_ring). */
+    private fun ringtoneUri(context: Context): Uri =
+        Uri.parse("android.resource://${context.packageName}/${R.raw.fastcash_ring}")
+
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        // Recrée le canal s’il existe déjà sans son / mauvaise importance.
+        // Anciens canaux (sonnerie téléphone) → suppression pour forcer la sonnerie app.
         manager.deleteNotificationChannel("pdr_incoming_call_v2")
+        manager.deleteNotificationChannel("pdr_incoming_call_v3")
         val existing = manager.getNotificationChannel(CHANNEL_ID)
         if (existing != null) return
         val channel = NotificationChannel(
@@ -48,12 +58,11 @@ object IncomingCallNotifier {
             vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
-            val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
-            setSound(ringtone, attrs)
+            setSound(ringtoneUri(context), attrs)
         }
         manager.createNotificationChannel(channel)
     }
@@ -104,6 +113,9 @@ object IncomingCallNotifier {
             .setImportant(true)
             .build()
 
+        // Boucle la sonnerie Fast-Cash jusqu’à acceptation / refus / expiration.
+        val looping = startRingtone(appContext)
+
         val builder = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
@@ -117,10 +129,16 @@ object IncomingCallNotifier {
             .setContentIntent(contentIntent)
             .setFullScreenIntent(contentIntent, true)
             .setTimeoutAfter((waitSeconds.coerceIn(5, 120) * 1000L))
-            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
             .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
             .addAction(0, "Refuser", refuseIntent)
             .addAction(0, "Accepter", acceptIntent)
+
+        if (looping) {
+            // Évite le double son (canal + MediaPlayer) : le MediaPlayer gère la sonnerie.
+            builder.setSilent(true)
+        } else {
+            builder.setSound(ringtoneUri(appContext))
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setStyle(
@@ -134,6 +152,7 @@ object IncomingCallNotifier {
 
     fun dismiss(context: Context) {
         lastRingedId = -1
+        stopRingtone()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(NOTIF_ID)
     }
@@ -167,6 +186,40 @@ object IncomingCallNotifier {
         } else {
             ContextCompat.startActivity(context, intent, null)
         }
+    }
+
+    private fun startRingtone(context: Context): Boolean {
+        stopRingtone()
+        return try {
+            val player = MediaPlayer().apply {
+                setDataSource(context, ringtoneUri(context))
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                isLooping = true
+                prepare()
+                start()
+            }
+            ringtonePlayer = player
+            true
+        } catch (_: Exception) {
+            ringtonePlayer = null
+            false
+        }
+    }
+
+    private fun stopRingtone() {
+        try {
+            ringtonePlayer?.run {
+                if (isPlaying) stop()
+                release()
+            }
+        } catch (_: Exception) {
+        }
+        ringtonePlayer = null
     }
 
     private fun wakeScreen(context: Context) {

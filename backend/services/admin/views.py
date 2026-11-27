@@ -86,7 +86,7 @@ class SettingsWrite(BaseModel):
         description=(
             "Plages de commission PDR (au moins une). Pas de chevauchement : "
             "ex. 1–10 puis 9–15 est refusé ; 11–15 est accepté. "
-            "Sur un retrait réussi, la liquidité CDF du PDR est diminuée de Z (converti), pas du montant retiré."
+            "Sur un retrait, la liquidité CDF du PDR est diminuée de Z (converti) au PIN réussi, pas au scan « terminé »."
         ),
     )
 

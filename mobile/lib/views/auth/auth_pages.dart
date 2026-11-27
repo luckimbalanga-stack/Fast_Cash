@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,8 +9,23 @@ import '../../core/format.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/widgets.dart';
 
-class WelcomePage extends StatelessWidget {
+class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
+
+  @override
+  State<WelcomePage> createState() => _WelcomePageState();
+}
+
+class _WelcomePageState extends State<WelcomePage> {
+  @override
+  void initState() {
+    super.initState();
+    // Réveille Render dès l’écran d’accueil pour éviter le timeout au login.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(context.read<AppController>().api.wake());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -128,13 +145,16 @@ class _LoginPageState extends State<LoginPage> {
   bool otpStep = false;
   bool passwordStep = false;
   bool busy = false;
+  bool waking = false;
   bool showPassword = false;
   String? previewCode;
   String? pdrName;
   String loginRole = 'user';
+  Timer? _wakeHint;
 
   @override
   void dispose() {
+    _wakeHint?.cancel();
     phone.dispose();
     code.dispose();
     password.dispose();
@@ -143,7 +163,14 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _next() async {
     final controller = context.read<AppController>();
-    setState(() => busy = true);
+    setState(() {
+      busy = true;
+      waking = false;
+    });
+    _wakeHint?.cancel();
+    _wakeHint = Timer(const Duration(seconds: 3), () {
+      if (mounted && busy) setState(() => waking = true);
+    });
     try {
       if (!otpStep && !passwordStep) {
         final issued = await controller.requestUserOtp(phone.text, 'login');
@@ -184,10 +211,16 @@ class _LoginPageState extends State<LoginPage> {
         if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
       }
     } on Exception {
+      _wakeHint?.cancel();
       if (mounted) {
-        setState(() => busy = false);
+        setState(() {
+          busy = false;
+          waking = false;
+        });
       }
       rethrow;
+    } finally {
+      _wakeHint?.cancel();
     }
   }
 
@@ -198,18 +231,22 @@ class _LoginPageState extends State<LoginPage> {
         : otpStep
             ? 'Vérification OTP'
             : 'Connexion';
-    final subtitle = passwordStep
-        ? 'Entrez le mot de passe configuré pour ${pdrName ?? 'ce point de retrait'}.'
-        : otpStep
-            ? (loginRole == 'pdr'
-                ? 'Mot de passe accepté. Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.'
-                : 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.')
-            : 'Utilisez le numéro de téléphone de votre compte.';
-    final actionLabel = passwordStep
-        ? 'Continuer'
-        : otpStep
-            ? 'Vérifier'
-            : 'Continuer';
+    final subtitle = waking
+        ? 'Le serveur Fast-Cash se réveille (Render). Patientez jusqu’à une minute…'
+        : passwordStep
+            ? 'Entrez le mot de passe configuré pour ${pdrName ?? 'ce point de retrait'}.'
+            : otpStep
+                ? (loginRole == 'pdr'
+                    ? 'Mot de passe accepté. Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.'
+                    : 'Saisissez le code envoyé au ${formatPhone('+243${phone.text}')}.')
+                : 'Utilisez le numéro de téléphone de votre compte.';
+    final actionLabel = waking
+        ? 'Réveil en cours…'
+        : passwordStep
+            ? 'Continuer'
+            : otpStep
+                ? 'Vérifier'
+                : 'Continuer';
 
     return Scaffold(
       appBar: AppBar(leading: const BackButton()),
@@ -233,7 +270,12 @@ class _LoginPageState extends State<LoginPage> {
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => runAction(context, () async {
                       await _next();
-                      if (mounted) setState(() => busy = false);
+                      if (mounted) {
+                        setState(() {
+                          busy = false;
+                          waking = false;
+                        });
+                      }
                     }),
                     decoration: InputDecoration(
                       hintText: 'Mot de passe',
@@ -291,7 +333,12 @@ class _LoginPageState extends State<LoginPage> {
                 busy: busy,
                 onPressed: () => runAction(context, () async {
                   await _next();
-                  if (mounted) setState(() => busy = false);
+                  if (mounted) {
+                    setState(() {
+                      busy = false;
+                      waking = false;
+                    });
+                  }
                 }),
               ),
             ),

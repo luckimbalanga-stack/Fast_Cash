@@ -19,7 +19,7 @@ class UserShell extends StatefulWidget {
 class UserShellState extends State<UserShell> {
   int index = 0;
   int? promptingId;
-  int? ratingPromptId;
+  final Set<int> _completionShown = {};
 
   void openTab(int value) => setState(() => index = value);
 
@@ -41,27 +41,28 @@ class UserShellState extends State<UserShell> {
     });
   }
 
-  void _offerRating(List<CashOperation> operations) {
+  /// Dès qu’une op est terminée : ouvre la page succès (+ note PDR) même si le client a quitté le ticket.
+  void _offerCompletion(List<CashOperation> operations) {
     if (promptingId != null) return;
-    // Ne pas ouvrir derrière une page empilée (ticket / reçu) — le popup part de _ReceivedPage.
+    // Déjà sur ticket / reçu / autre page empilée — TokenPage / ReceivedPage gèrent.
     if (Navigator.of(context).canPop()) return;
-    final waiting = operations.where((operation) => operation.isWithdrawal && (operation.status == 'cash_delivered' || operation.status == 'completed') && operation.ratingStars == null);
-    if (waiting.isEmpty) {
-      ratingPromptId = null;
-      return;
+    CashOperation? candidate;
+    for (final operation in operations) {
+      if (operation.status != 'cash_delivered' && operation.status != 'completed') continue;
+      if (_completionShown.contains(operation.id)) continue;
+      // Déjà noté : pas de réouverture auto.
+      if (operation.ratingStars != null) continue;
+      candidate = operation;
+      break;
     }
-    final operation = waiting.first;
-    if (ratingPromptId == operation.id) return;
-    ratingPromptId = operation.id;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    if (candidate == null) return;
+    _completionShown.add(candidate.id);
+    final operation = candidate;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || Navigator.of(context).canPop()) return;
-      await showRatingDialog(context, operation);
-      if (!mounted) return;
-      final stillWaiting = context.read<AppController>().operationById(operation.id);
-      final pending = stillWaiting != null &&
-          (stillWaiting.status == 'cash_delivered' || stillWaiting.status == 'completed') &&
-          stillWaiting.ratingStars == null;
-      if (!pending) setState(() => ratingPromptId = null);
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ReceivedPage(operation: operation, celebrate: true)),
+      );
     });
   }
 
@@ -69,7 +70,7 @@ class UserShellState extends State<UserShell> {
   Widget build(BuildContext context) {
     final operations = context.watch<AppController>().operations;
     _offerPin(operations);
-    _offerRating(operations);
+    _offerCompletion(operations);
     final pages = [
       const HomePage(),
       const SearchPage(),

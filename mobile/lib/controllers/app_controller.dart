@@ -105,20 +105,41 @@ class AppController extends ChangeNotifier {
       final info = await PackageInfo.fromPlatform();
       installedVersion = info.version;
     } catch (_) {}
+
+    // Affiche l’UI tout de suite : ne bloque plus sur le cold-start Render.
+    final prefs = await SharedPreferences.getInstance();
+    final savedToken = prefs.getString(_kToken);
+    final savedRole = prefs.getString(_kRole);
+    if (savedToken != null && savedRole != null && savedRole != 'guest') {
+      token = savedToken;
+      role = savedRole;
+      selectedPhoneId = prefs.getInt(_kPhoneId);
+    }
+    sessionReady = true;
+    notifyListeners();
+
+    // Réveil API + settings + validation session en arrière-plan.
+    unawaited(_hydrateAfterBoot());
+  }
+
+  Future<void> _hydrateAfterBoot() async {
+    unawaited(api.wake());
     try {
       final json = await api.send('GET', '/api/settings');
       settings = AppSettings.fromJson(json as Map<String, dynamic>);
       pendingUpdate = _resolveUpdate(settings, installedVersion);
+      notifyListeners();
     } catch (_) {}
+    if (token == null || role == 'guest') return;
     try {
-      await _restoreSession().timeout(const Duration(seconds: 120));
+      await _restoreSession().timeout(const Duration(seconds: 90));
     } catch (_) {
       token = null;
       role = 'guest';
       user = null;
       pdr = null;
+      await _persistSession();
     }
-    sessionReady = true;
     notifyListeners();
   }
 
@@ -198,12 +219,16 @@ class AppController extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> requestUserOtp(String phone, String purpose, {String? name}) async {
-    final json = await api.send('POST', '/api/auth/request-otp', body: {'phone': phone, 'purpose': purpose, 'name': name});
+    final json = await api.sendAwake(
+      'POST',
+      '/api/auth/request-otp',
+      body: {'phone': phone, 'purpose': purpose, 'name': name},
+    );
     return json as Map<String, dynamic>;
   }
 
   Future<void> verifyUser(String phone, String code, String purpose, {String? name, String? network}) async {
-    final json = await api.send('POST', '/api/auth/verify', body: {
+    final json = await api.sendAwake('POST', '/api/auth/verify', body: {
       'phone': phone,
       'code': code,
       'purpose': purpose,
@@ -221,13 +246,17 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> verifyPdr(String phone, String code) async {
-    final json = await api.send('POST', '/api/auth/pdr/verify', body: {'phone': phone, 'code': code, 'purpose': 'pdr'});
+    final json = await api.sendAwake(
+      'POST',
+      '/api/auth/pdr/verify',
+      body: {'phone': phone, 'code': code, 'purpose': 'pdr'},
+    );
     await applyPdrSession(json as Map<String, dynamic>);
   }
 
   /// Valide le mot de passe PDR et déclenche l’OTP (simulation console si SMS off).
   Future<Map<String, dynamic>> enterPdr(String phone, String password) async {
-    final json = await api.send('POST', '/api/auth/pdr/enter', body: {
+    final json = await api.sendAwake('POST', '/api/auth/pdr/enter', body: {
       'phone': phone,
       'password': password,
     });
@@ -305,11 +334,24 @@ class AppController extends ChangeNotifier {
     _startSync();
   }
 
+  /// Client avec ticket / PIN / dispatch : poll rapide pour afficher le succès dès le scan.
+  bool get _userNeedsFastSync {
+    if (role != 'user') return false;
+    if (hasActiveDispatch) return true;
+    return operations.any(
+      (op) =>
+          op.status == 'pending' ||
+          op.status == 'pin_required' ||
+          op.status == 'payment_confirmed' ||
+          op.status == 'accepted',
+    );
+  }
+
   void _startSync() {
     _sync?.cancel();
     if (token == null || role == 'guest') return;
-    // PDR : le watchdog gère déjà l’appel entrant → sync UI plus espacé.
-    final seconds = role == 'pdr' ? 8 : 10;
+    // PDR : watchdog pour l’appel. Client : 2 s si ticket/demande en cours, sinon 6 s.
+    final seconds = role == 'pdr' ? 8 : (_userNeedsFastSync ? 2 : 6);
     _sync = Timer.periodic(Duration(seconds: seconds), (_) {
       if (_syncPaused) return;
       final dueFull = _lastFullRefresh == null || DateTime.now().difference(_lastFullRefresh!) > const Duration(minutes: 3);
@@ -319,6 +361,12 @@ class AppController extends ChangeNotifier {
         unawaited(refreshLight());
       }
     });
+  }
+
+  void _retuneSyncIfNeeded() {
+    if (_syncPaused || token == null || role == 'guest') return;
+    // Recrée le timer : passe en 2 s dès qu’un ticket est actif, sinon 6 s.
+    _startSync();
   }
 
   String _opsSignature(List<CashOperation> items) => items.map((item) => '${item.id}:${item.status}').join('|');
@@ -373,6 +421,7 @@ class AppController extends ChangeNotifier {
       if (changed) {
         notifyListeners();
         if (role == 'pdr') _maybeRingIncoming();
+        if (role == 'user') _retuneSyncIfNeeded();
       }
     } catch (_) {
     } finally {

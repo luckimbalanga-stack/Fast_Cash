@@ -83,7 +83,8 @@ def _commission_ranges(db: Session) -> list[dict]:
 def _liquidity(db: Session, path: str, op: Operation) -> None:
     """Mouvements liquidité PDR toujours en CDF.
 
-    Retrait : coupe = plage commission type retrait (Z USD → CDF).
+    Retrait : coupe = plage commission type retrait (Z USD → CDF),
+    appliquée au PIN réussi (`authorize` / consume), pas au scan terminé.
     Dépôt receive : crédite le montant CDF, puis coupe optionnelle si plages dépôt configurées.
     """
     rate = float(_setting(db, "usd_cdf_rate", "2880"))
@@ -465,12 +466,19 @@ def authorize(db: Session, user_id: int, operation_id: int, pin: str) -> dict:
     op.mm_instruction = json.dumps(prepared["record"], ensure_ascii=False)
     print(f"Fast-Cash — ordre Mobile Money préparé {op.reference} session {op.mm_session_ref}", flush=True)
     if op.type == "withdrawal":
+        # Coupe commission CDF dès le PIN réussi (plus au scan « terminé »).
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/consume", op)
+        op.reserved = False
         op.token_code = op.reference
         op.token_status = "active"
         op.token_expires_at = None
         _touch(db, op, "payment_confirmed", "Paiement confirmé")
         notify("pdr", op.pdr_id, "Paiement confirmé", f"Le jeton {op.token_code} est prêt à être scanné.", op.id)
         # Utilisateur : pas de notif intermédiaire (PIN / QR) — seulement accepté / terminé.
+        try:
+            internal_post(PDR_URL, f"/pdr/{op.pdr_id}/liquidity/check", {})
+        except HTTPException:
+            pass
     else:
         _touch(db, op, "accepted", "Code PIN confirmé, remise des espèces en attente")
         notify("pdr", op.pdr_id, "Client autorisé", f"{op.user_name} a autorisé le dépôt {op.reference}.", op.id)
@@ -503,9 +511,17 @@ def cancel(db: Session, role: str, ident: int, operation_id: int) -> dict:
     if op.status not in {"pending", "accepted", "pin_required", "payment_pending", "payment_confirmed"}:
         raise HTTPException(status_code=409, detail="Cette opération ne peut plus être annulée.")
     was_offer = op.status == "pending"
+    prior_status = op.status
     if op.reserved:
+        # Encore seulement réservée (avant PIN) → libérer la réserve.
         _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/release", op)
         op.reserved = False
+    elif (
+        op.type == "withdrawal"
+        and prior_status == "payment_confirmed"
+    ):
+        # Commission déjà coupée au PIN → remettre la liquidité CDF.
+        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/receive", op)
     if op.token_status == "active":
         op.token_status = "cancelled"
     label = "Délai d’offre écoulé — passage au point suivant" if was_offer else "Opération annulée"
@@ -561,8 +577,11 @@ def redeem(db: Session, pdr_id: int, code: str) -> dict:
         raise HTTPException(status_code=409, detail=preview.get("error") or "Jeton invalide.")
 
     if op.type == "withdrawal":
-        _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/consume", op)
-        op.reserved = False
+        # Compat opérations déjà acceptées avant ce changement : coupe au scan si encore réservée.
+        if op.reserved:
+            _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/consume", op)
+            op.reserved = False
+        # Sinon la commission a déjà été coupée au PIN (authorize).
     else:
         _liquidity(db, f"/pdr/{op.pdr_id}/liquidity/receive", op)
     op.token_status = "used"
